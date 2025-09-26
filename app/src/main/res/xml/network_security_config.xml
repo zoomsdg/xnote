@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <domain-config cleartextTrafficPermitted="false">
+        <!-- 禁止明文HTTP传输 -->
+        <domain includeSubdomains="true">example.com</domain>
+    </domain-config>
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <!-- 只信任系统证书 -->
+            <certificates src="system"/>
+        </trust-anchors>
+    </base-config>
+</network-security-config>

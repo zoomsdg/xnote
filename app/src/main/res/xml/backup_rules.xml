@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<full-backup-content>
+    <!-- 排除敏感数据不被备份 -->
+    <exclude domain="database" />
+    <exclude domain="sharedpref" />
+    <!-- 排除媒体文件不被备份 -->
+    <exclude domain="file" path="images/" />
+    <exclude domain="file" path="audios/" />
+    <exclude domain="file" path="audio/" />
+</full-backup-content>

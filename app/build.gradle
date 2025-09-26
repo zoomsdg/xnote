@@ -1,0 +1,104 @@
+plugins {
+    id 'com.android.application'
+    id 'org.jetbrains.kotlin.android'
+    id 'kotlin-kapt'
+}
+
+android {
+    namespace 'com.example.xnote'
+    compileSdk 33
+
+    defaultConfig {
+        applicationId "com.example.xnote"
+        minSdk 24
+        targetSdk 33
+        versionCode 1
+        versionName "1.2"
+
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+    }
+
+signingConfigs {
+        release {
+            storeFile file("/home/cc/myprojects/my-release-key.keystore")  // keystore 文件路径
+            storePassword "zjdszs"
+            keyAlias "myalias"                        // 刚才生成的 alias
+            keyPassword "zjdszs"
+        }
+    }
+
+
+
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+	    
+            signingConfig signingConfigs.release
+        }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+    kotlinOptions {
+        jvmTarget = '1.8'
+    }
+    buildFeatures {
+        viewBinding true
+    }
+}
+
+dependencies {
+    implementation 'androidx.core:core-ktx:1.9.0'
+    implementation 'androidx.appcompat:appcompat:1.6.1'
+    implementation 'com.google.android.material:material:1.8.0'
+    implementation 'androidx.constraintlayout:constraintlayout:2.1.4'
+    
+    // RecyclerView
+    implementation 'androidx.recyclerview:recyclerview:1.3.0'
+    
+    // ViewModel and LiveData
+    implementation 'androidx.lifecycle:lifecycle-viewmodel-ktx:2.6.2'
+    implementation 'androidx.lifecycle:lifecycle-livedata-ktx:2.6.2'
+    
+    // Room database
+    implementation 'androidx.room:room-runtime:2.5.0'
+    implementation 'androidx.room:room-ktx:2.5.0'
+    kapt 'androidx.room:room-compiler:2.5.0'
+    
+    // Gson for JSON serialization
+    implementation 'com.google.code.gson:gson:2.10.1'
+    
+    // Image loading
+    implementation 'com.github.bumptech.glide:glide:4.14.2'
+    
+    // Permissions
+    implementation 'androidx.activity:activity-ktx:1.7.2'
+    
+    // Fragment
+    implementation 'androidx.fragment:fragment-ktx:1.6.1'
+    
+    // ExoPlayer for audio playback
+    implementation 'androidx.media3:media3-exoplayer:1.0.2'
+    implementation 'androidx.media3:media3-common:1.0.2'
+    
+    // ZIP file handling with encryption
+    implementation 'net.lingala.zip4j:zip4j:2.11.5'
+    
+    // Security and encryption
+    implementation 'androidx.security:security-crypto:1.1.0-alpha06'
+    
+    testImplementation 'junit:junit:4.13.2'
+    androidTestImplementation 'androidx.test.ext:junit:1.1.5'
+    androidTestImplementation 'androidx.test.espresso:espresso-core:3.5.1'
+}
+
+configurations.all {
+    resolutionStrategy {
+        force 'org.jetbrains.kotlin:kotlin-stdlib:1.7.10'
+        force 'org.jetbrains.kotlin:kotlin-stdlib-jdk7:1.7.10'
+        force 'org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.7.10'
+    }
+}

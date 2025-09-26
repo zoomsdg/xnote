@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="utf-8"?>
+<menu xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto">
+
+    <item
+        android:id="@+id/action_search"
+        android:title="搜索"
+        android:icon="@android:drawable/ic_menu_search"
+        app:showAsAction="ifRoom" />
+
+    <item
+        android:id="@+id/action_export"
+        android:title="导出"
+        app:showAsAction="never" />
+
+    <item
+        android:id="@+id/action_import"
+        android:title="导入"
+        app:showAsAction="never" />
+
+    <item
+        android:id="@+id/action_delete_mode"
+        android:title="删除记事"
+        android:icon="@drawable/ic_delete"
+	android:visible="false"
+        app:showAsAction="never" />
+
+    <item
+        android:id="@+id/action_cancel_delete"
+        android:title="取消"
+        android:icon="@drawable/ic_close"
+        android:visible="false"
+        app:showAsAction="ifRoom" />
+
+    <item
+        android:id="@+id/action_delete_selected"
+        android:title="删除选中"
+        android:visible="false"
+        app:showAsAction="never" />
+
+    <item
+        android:id="@+id/action_export_selected"
+        android:title="导出选中"
+        android:visible="false"
+        app:showAsAction="never" />
+
+</menu>

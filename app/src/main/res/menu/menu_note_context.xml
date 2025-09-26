@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<menu xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <item
+        android:id="@+id/action_pin"
+        android:title="置顶"
+        android:icon="@drawable/ic_pin" />
+
+    <item
+        android:id="@+id/action_unpin"
+        android:title="取消置顶"
+        android:icon="@drawable/ic_pin" />
+
+    <item
+        android:id="@+id/action_edit"
+        android:title="编辑"
+        android:icon="@android:drawable/ic_menu_edit" />
+
+    <item
+        android:id="@+id/action_delete"
+        android:title="删除"
+        android:icon="@drawable/ic_delete" />
+
+</menu>
