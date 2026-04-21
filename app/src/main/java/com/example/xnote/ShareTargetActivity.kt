@@ -260,29 +260,19 @@ class ShareTargetActivity : AppCompatActivity() {
 
     private suspend fun saveSharedImage(imageUri: Uri): String? {
         return try {
-            val inputStream = contentResolver.openInputStream(imageUri)
-            if (inputStream != null) {
-                val fileName = "shared_image_${System.currentTimeMillis()}.jpg"
-                val targetFile = File(filesDir, "images/$fileName")
-                targetFile.parentFile?.mkdirs()
+            val inputStream = contentResolver.openInputStream(imageUri) ?: return null
+            val fileName = "shared_image_${System.currentTimeMillis()}.jpg"
+            val targetFile = File(filesDir, "images/$fileName")
+            targetFile.parentFile?.mkdirs()
 
-                inputStream.use { input ->
-                    targetFile.outputStream().use { output ->
-                        input.copyTo(output)
-                    }
-                }
-
-                // 压缩图片
-                val compressedPath = ImageUtils.compressImageFile(targetFile.absolutePath)
-                if (compressedPath != null && compressedPath != targetFile.absolutePath) {
-                    targetFile.delete() // 删除原文件
-                    compressedPath
-                } else {
-                    targetFile.absolutePath
-                }
-            } else {
-                null
+            // 直接加密落盘
+            inputStream.use { input ->
+                com.example.xnote.security.MediaCryptor.encryptStream(input, targetFile)
             }
+
+            // 压缩（读入解密 → 缩放 → 加密回写）
+            ImageUtils.compressImageFile(targetFile.absolutePath)
+            targetFile.absolutePath
         } catch (e: Exception) {
             SecurityLog.e("ShareTarget", "Failed to save shared image", e)
             null

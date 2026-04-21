@@ -5,6 +5,7 @@ import android.os.Environment
 import com.example.xnote.data.FullNote
 import com.example.xnote.data.NoteBlock
 import com.example.xnote.data.BlockType
+import com.example.xnote.security.MediaCryptor
 import com.example.xnote.utils.SecurityLog
 import com.example.xnote.utils.SecureFileValidator
 import com.example.xnote.utils.SecureTempFileManager
@@ -67,16 +68,15 @@ class ExportImportUtils(private val context: Context) {
                             )
                         }
                         BlockType.IMAGE -> {
-                            // 安全复制图片文件
+                            // 解密落到导出临时目录（ZIP 内必须是明文 JPEG）
                             val originalFile = File(block.url ?: "")
                             if (originalFile.exists()) {
-                                // 验证文件安全性
                                 val fileValidation = SecureFileValidator.validateFileSize(originalFile)
                                 if (fileValidation is SecureFileValidator.ValidationResult.Valid) {
                                     val fileName = "image_${UUID.randomUUID()}.${originalFile.extension}"
                                     val targetFile = SecureFileValidator.createSecureExtractPath(mediaDir, fileName)
-                                    originalFile.copyTo(targetFile, overwrite = true)
-                                    
+                                    targetFile.writeBytes(MediaCryptor.readAll(originalFile))
+
                                     ExportBlock(
                                         type = "image",
                                         order = block.order,
@@ -94,16 +94,15 @@ class ExportImportUtils(private val context: Context) {
                             }
                         }
                         BlockType.AUDIO -> {
-                            // 安全复制音频文件
+                            // 解密落到导出临时目录（ZIP 内必须是明文音频）
                             val originalFile = File(block.url ?: "")
                             if (originalFile.exists()) {
-                                // 验证文件安全性
                                 val fileValidation = SecureFileValidator.validateFileSize(originalFile)
                                 if (fileValidation is SecureFileValidator.ValidationResult.Valid) {
                                     val fileName = "audio_${UUID.randomUUID()}.${originalFile.extension}"
                                     val targetFile = SecureFileValidator.createSecureExtractPath(mediaDir, fileName)
-                                    originalFile.copyTo(targetFile, overwrite = true)
-                                    
+                                    targetFile.writeBytes(MediaCryptor.readAll(originalFile))
+
                                     ExportBlock(
                                         type = "audio",
                                         order = block.order,

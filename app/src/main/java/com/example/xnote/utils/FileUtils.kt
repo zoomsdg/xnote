@@ -5,144 +5,130 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.media.MediaMetadataRetriever
 import android.net.Uri
+import com.example.xnote.security.MediaCryptor
+import java.io.ByteArrayOutputStream
 import java.io.File
-import java.io.FileOutputStream
 import java.io.IOException
-import java.util.*
+import java.util.UUID
 
 /**
- * 文件工具类
+ * 文件工具类。
+ * 图片/音频在私有目录中以 [MediaCryptor] 的 AES-GCM 格式保存，
+ * 即便设备 root，文件落盘内容也是加密的。
  */
 object FileUtils {
-    
+
     /**
-     * 保存图片到应用私有目录
+     * 保存图片到应用私有目录（加密）
      */
     fun saveImageToPrivateStorage(context: Context, uri: Uri): String? {
         return try {
-            val inputStream = context.contentResolver.openInputStream(uri)
-            val bitmap = BitmapFactory.decodeStream(inputStream)
-            inputStream?.close()
-            
-            val filename = "img_${UUID.randomUUID()}.jpg"
-            val file = File(context.filesDir, "images")
-            if (!file.exists()) {
-                file.mkdirs()
-            }
-            
-            val imageFile = File(file, filename)
-            val outputStream = FileOutputStream(imageFile)
-            bitmap.compress(Bitmap.CompressFormat.JPEG, 90, outputStream)
-            outputStream.close()
-            
-            imageFile.absolutePath
+            val bitmap = context.contentResolver.openInputStream(uri)?.use {
+                BitmapFactory.decodeStream(it)
+            } ?: return null
+            val baos = ByteArrayOutputStream()
+            bitmap.compress(Bitmap.CompressFormat.JPEG, 90, baos)
+            bitmap.recycle()
+
+            val dir = File(context.filesDir, "images").apply { mkdirs() }
+            val target = File(dir, "img_${UUID.randomUUID()}.jpg")
+            MediaCryptor.encryptBytes(baos.toByteArray(), target)
+            target.absolutePath
         } catch (e: IOException) {
-            e.printStackTrace()
+            SecurityLog.e("FileUtils", "saveImageToPrivateStorage failed", e)
             null
         }
     }
-    
+
     /**
-     * 保存音频到应用私有目录（从文件路径）
+     * 保存音频到应用私有目录（加密，从已有文件路径）
      */
     fun saveAudioToPrivateStorage(context: Context, sourcePath: String): String? {
         return try {
-            val filename = "audio_${UUID.randomUUID()}.m4a"
-            val file = File(context.filesDir, "audios")
-            if (!file.exists()) {
-                file.mkdirs()
-            }
-            
-            val audioFile = File(file, filename)
-            val sourceFile = File(sourcePath)
-            
-            sourceFile.copyTo(audioFile, true)
-            audioFile.absolutePath
+            val src = File(sourcePath)
+            if (!src.exists()) return null
+            val dir = File(context.filesDir, "audios").apply { mkdirs() }
+            val target = File(dir, "audio_${UUID.randomUUID()}.m4a")
+            MediaCryptor.encryptBytes(src.readBytes(), target)
+            target.absolutePath
         } catch (e: IOException) {
-            e.printStackTrace()
+            SecurityLog.e("FileUtils", "saveAudioToPrivateStorage(path) failed", e)
             null
         }
     }
-    
+
     /**
-     * 保存音频到应用私有目录（从Uri）
+     * 保存音频到应用私有目录（加密，从 Uri）
      */
     fun saveAudioToPrivateStorage(context: Context, uri: Uri): String? {
         return try {
-            val inputStream = context.contentResolver.openInputStream(uri)
-            val filename = "audio_${UUID.randomUUID()}.m4a"
-            val file = File(context.filesDir, "audios")
-            if (!file.exists()) {
-                file.mkdirs()
-            }
-            
-            val audioFile = File(file, filename)
-            val outputStream = FileOutputStream(audioFile)
-            
-            inputStream?.copyTo(outputStream)
-            inputStream?.close()
-            outputStream.close()
-            
-            audioFile.absolutePath
+            val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                ?: return null
+            val dir = File(context.filesDir, "audios").apply { mkdirs() }
+            val target = File(dir, "audio_${UUID.randomUUID()}.m4a")
+            MediaCryptor.encryptBytes(bytes, target)
+            target.absolutePath
         } catch (e: IOException) {
-            e.printStackTrace()
+            SecurityLog.e("FileUtils", "saveAudioToPrivateStorage(uri) failed", e)
             null
         }
     }
-    
+
     /**
-     * 获取音频时长（秒）
+     * 获取音频时长（秒）。需要解密到临时文件后让 MediaMetadataRetriever 读取。
      */
-    fun getAudioDuration(filePath: String): Long {
+    fun getAudioDuration(context: Context, filePath: String): Long {
+        var tmp: File? = null
         return try {
+            val src = File(filePath)
+            val target = if (MediaCryptor.isEncryptedFile(src)) {
+                MediaCryptor.decryptToCache(context, src, ".m4a").also { tmp = it }
+            } else src
             val retriever = MediaMetadataRetriever()
-            retriever.setDataSource(filePath)
+            retriever.setDataSource(target.absolutePath)
             val duration = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
             retriever.release()
-            // MediaMetadataRetriever returns milliseconds, convert to seconds
             (duration?.toLong() ?: 0L) / 1000
         } catch (e: Exception) {
-            e.printStackTrace()
+            SecurityLog.e("FileUtils", "getAudioDuration failed", e)
             0L
+        } finally {
+            MediaCryptor.releaseDecryptedTemp(tmp)
         }
     }
-    
+
     /**
-     * 获取图片尺寸
+     * 获取图片尺寸（不解码全图，只读 header）
      */
     fun getImageSize(filePath: String): Pair<Int, Int> {
         return try {
-            val options = BitmapFactory.Options().apply {
-                inJustDecodeBounds = true
-            }
-            BitmapFactory.decodeFile(filePath, options)
-            Pair(options.outWidth, options.outHeight)
+            val src = File(filePath)
+            val opts = MediaCryptor.decodeBitmapBounds(src)
+            Pair(opts.outWidth, opts.outHeight)
         } catch (e: Exception) {
-            e.printStackTrace()
+            SecurityLog.e("FileUtils", "getImageSize failed", e)
             Pair(0, 0)
         }
     }
-    
+
     /**
      * 删除文件
      */
     fun deleteFile(filePath: String): Boolean {
         return try {
-            val file = File(filePath)
-            file.delete()
+            File(filePath).delete()
         } catch (e: Exception) {
-            e.printStackTrace()
+            SecurityLog.e("FileUtils", "deleteFile failed", e)
             false
         }
     }
-    
+
     /**
-     * 获取文件大小（字节）
+     * 获取（密文）文件大小
      */
     fun getFileSize(filePath: String): Long {
         return try {
-            val file = File(filePath)
-            file.length()
+            File(filePath).length()
         } catch (e: Exception) {
             0L
         }

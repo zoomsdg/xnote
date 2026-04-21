@@ -14,7 +14,9 @@ import android.view.MotionEvent
 import androidx.appcompat.widget.AppCompatEditText
 import com.example.xnote.data.BlockType
 import com.example.xnote.data.NoteBlock
+import com.example.xnote.security.MediaCryptor
 import com.example.xnote.utils.SecurityLog
+import java.io.File
 import java.util.*
 
 /**
@@ -393,21 +395,10 @@ class ImageMediaSpan(
     private fun loadImage() {
         block.url?.let { imagePath ->
             try {
-                val options = BitmapFactory.Options().apply {
-                    inJustDecodeBounds = true
-                }
-                BitmapFactory.decodeFile(imagePath, options)
-                
-                // 计算缩放比例
+                // 兼容明文与 XNC1 加密：MediaCryptor.readAll 自动判别
                 val maxWidth = 300
                 val maxHeight = 200
-                val scaleFactor = calculateScaleFactor(options.outWidth, options.outHeight, maxWidth, maxHeight)
-                
-                // 加载实际图片
-                val actualOptions = BitmapFactory.Options().apply {
-                    inSampleSize = scaleFactor
-                }
-                imageBitmap = BitmapFactory.decodeFile(imagePath, actualOptions)
+                imageBitmap = MediaCryptor.decodeBitmapSampled(File(imagePath), maxWidth, maxHeight)
                 
                 // 更新显示尺寸
                 imageBitmap?.let { bitmap ->

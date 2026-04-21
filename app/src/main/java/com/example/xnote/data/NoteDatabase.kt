@@ -7,6 +7,8 @@ import androidx.room.TypeConverters
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 import android.content.Context
+import com.example.xnote.security.DatabaseKeyProvider
+import net.sqlcipher.database.SupportFactory
 
 /**
  * Room 数据库
@@ -57,11 +59,19 @@ abstract class NoteDatabase : RoomDatabase() {
         
         fun getDatabase(context: Context): NoteDatabase {
             return INSTANCE ?: synchronized(this) {
+                val appCtx = context.applicationContext
+                val passphrase = DatabaseKeyProvider.getOrCreatePassphrase(appCtx)
+                    .toByteArray(Charsets.US_ASCII)
                 val instance = Room.databaseBuilder(
-                    context.applicationContext,
+                    appCtx,
                     NoteDatabase::class.java,
                     "note_database"
-                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3).build()
+                )
+                    // clearPassphrase=false: 让 SupportFactory 保留 passphrase 字节，
+                    // 以防 Room 在生命周期内需要重建 SupportHelper 时取不到密钥
+                    .openHelperFactory(SupportFactory(passphrase, null, false))
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+                    .build()
                 INSTANCE = instance
                 instance
             }

@@ -97,7 +97,7 @@ class NoteEditActivity : AppCompatActivity() {
     
     private fun initComponents() {
         audioRecorder = AudioRecorder(this)
-        audioPlayer = AudioPlayer()
+        audioPlayer = AudioPlayer(this)
         
         audioPlayer.setOnCompletionListener {
             // Handle audio playback completion
@@ -435,7 +435,7 @@ class NoteEditActivity : AppCompatActivity() {
             try {
                 val filePath = FileUtils.saveAudioToPrivateStorage(this@NoteEditActivity, uri)
                 if (filePath != null) {
-                    val duration = FileUtils.getAudioDuration(filePath)
+                    val duration = FileUtils.getAudioDuration(this@NoteEditActivity, filePath)
                     val block = NoteBlock(
                         id = UUID.randomUUID().toString(),
                         noteId = noteId,
@@ -805,8 +805,8 @@ class NoteEditActivity : AppCompatActivity() {
             val tvImageSize = dialog.findViewById<android.widget.TextView>(R.id.tvImageSize)
             val tvImagePath = dialog.findViewById<android.widget.TextView>(R.id.tvImagePath)
             
-            // 加载并显示图片
-            val bitmap = android.graphics.BitmapFactory.decodeFile(imagePath)
+            // 加载并显示图片（自动判别明文/XNC1 加密）
+            val bitmap = com.example.xnote.security.MediaCryptor.decodeBitmapFull(file)
             if (bitmap != null) {
                 imageView.setImageBitmap(bitmap)
                 

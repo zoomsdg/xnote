@@ -2,6 +2,7 @@ package com.example.xnote.repository
 
 import android.content.Context
 import com.example.xnote.data.*
+import com.example.xnote.security.MediaCryptor
 import com.example.xnote.utils.ExportImportUtils
 import com.example.xnote.utils.FileUtils
 import com.example.xnote.utils.SecurityLog
@@ -257,13 +258,13 @@ class NoteRepository(val context: Context) {
                 )
                 BlockType.IMAGE -> {
                     var filePath: String? = null
-                    
-                    // 复制媒体文件到应用私有目录
+
+                    // 加密落盘到应用私有目录
                     if (importBlock.mediaFile?.exists() == true) {
                         val fileName = "imported_image_${System.currentTimeMillis()}_${importBlock.mediaFile.name}"
                         val targetFile = File(context.filesDir, "images/$fileName")
                         targetFile.parentFile?.mkdirs()
-                        importBlock.mediaFile.copyTo(targetFile, overwrite = true)
+                        MediaCryptor.encryptBytes(importBlock.mediaFile.readBytes(), targetFile)
                         filePath = targetFile.absolutePath
                     }
                     
@@ -282,13 +283,13 @@ class NoteRepository(val context: Context) {
                 }
                 BlockType.AUDIO -> {
                     var filePath: String? = null
-                    
-                    // 复制媒体文件到应用私有目录
+
+                    // 加密落盘到应用私有目录
                     if (importBlock.mediaFile?.exists() == true) {
                         val fileName = "imported_audio_${System.currentTimeMillis()}_${importBlock.mediaFile.name}"
-                        val targetFile = File(context.filesDir, "audio/$fileName")
+                        val targetFile = File(context.filesDir, "audios/$fileName")
                         targetFile.parentFile?.mkdirs()
-                        importBlock.mediaFile.copyTo(targetFile, overwrite = true)
+                        MediaCryptor.encryptBytes(importBlock.mediaFile.readBytes(), targetFile)
                         filePath = targetFile.absolutePath
                     }
                     

@@ -36,3 +36,8 @@
 
 # Data models
 -keep class com.example.xnote.data.** { *; }
+
+# SQLCipher (loaded via JNI; must not be renamed/stripped)
+-keep class net.sqlcipher.** { *; }
+-keep class net.sqlcipher.database.** { *; }
+-dontwarn net.sqlcipher.**
