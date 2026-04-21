@@ -7,8 +7,10 @@ import android.text.Editable
 import android.text.Spannable
 import android.text.SpannableStringBuilder
 import android.text.TextWatcher
+import android.text.style.ForegroundColorSpan
 import android.text.style.ImageSpan
 import android.text.style.ReplacementSpan
+import android.text.style.UnderlineSpan
 import android.util.AttributeSet
 import android.view.MotionEvent
 import androidx.appcompat.widget.AppCompatEditText
@@ -34,6 +36,9 @@ class RichEditText @JvmOverloads constructor(
     
     companion object {
         private const val OBJ_REPLACEMENT_CHAR = '\uFFFC' // 对象替换字符
+
+        /** 4 位及以上连续数字（"超过 3 个" = ≥ 4 个） */
+        private val DIGIT_RUN_PATTERN = Regex("\\d{4,}")
     }
     
     init {
@@ -42,10 +47,44 @@ class RichEditText @JvmOverloads constructor(
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
             override fun afterTextChanged(s: Editable?) {
+                s?.let { applyDigitHighlight(it) }
                 notifyContentChanged()
             }
         })
     }
+
+    /**
+     * 给 4 位及以上连续数字串加黄色 + 下划线。
+     * 仅作显示样式，不写入数据库（每次加载都会重涂）。
+     */
+    private fun applyDigitHighlight(editable: Editable) {
+        // 先清掉自己之前贴的 span，避免编辑时残留与重叠
+        editable.getSpans(0, editable.length, DigitColorSpan::class.java)
+            .forEach { editable.removeSpan(it) }
+        editable.getSpans(0, editable.length, DigitUnderlineSpan::class.java)
+            .forEach { editable.removeSpan(it) }
+
+        DIGIT_RUN_PATTERN.findAll(editable).forEach { m ->
+            val start = m.range.first
+            val end = m.range.last + 1
+            editable.setSpan(
+                DigitColorSpan(Color.YELLOW),
+                start, end,
+                Spannable.SPAN_EXCLUSIVE_EXCLUSIVE
+            )
+            editable.setSpan(
+                DigitUnderlineSpan(),
+                start, end,
+                Spannable.SPAN_EXCLUSIVE_EXCLUSIVE
+            )
+        }
+    }
+
+    /** 识别我们自己贴的颜色 span，便于重涂时清理 */
+    private class DigitColorSpan(color: Int) : ForegroundColorSpan(color)
+
+    /** 识别我们自己贴的下划线 span，便于重涂时清理 */
+    private class DigitUnderlineSpan : UnderlineSpan()
     
     /**
      * 设置内容变更监听器
