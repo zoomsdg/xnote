@@ -109,6 +109,19 @@
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintBottom_toBottomOf="parent" />
 
+    <com.google.android.material.floatingactionbutton.FloatingActionButton
+        android:id="@+id/fabSearch"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="16dp"
+        android:layout_marginBottom="12dp"
+        android:src="@android:drawable/ic_menu_search"
+        android:contentDescription="搜索"
+        app:backgroundTint="@color/accent_color"
+        app:tint="@color/white"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintBottom_toBottomOf="parent" />
+
     <!-- 批量操作底部操作栏 -->
     <LinearLayout
         android:id="@+id/batchActionBar"

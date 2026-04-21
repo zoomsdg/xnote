@@ -66,6 +66,12 @@ class MainActivity : AppCompatActivity() {
         binding.fabNewNote.setOnClickListener {
             createNewNote()
         }
+
+        // 搜索按钮：左下角 FAB，触发原菜单搜索项相同的逻辑
+        binding.fabSearch.setOnClickListener {
+            viewModel.enterSearchMode()
+            invalidateOptionsMenu()
+        }
         
         // 初始隐藏搜索栏
         binding.searchLayout.visibility = View.GONE
@@ -354,6 +360,7 @@ class MainActivity : AppCompatActivity() {
     
     private fun updateSearchModeUI(isSearchMode: Boolean) {
         binding.searchLayout.visibility = if (isSearchMode) View.VISIBLE else View.GONE
+        binding.fabSearch.visibility = if (isSearchMode) View.GONE else View.VISIBLE
         if (isSearchMode) {
             binding.searchEditText.requestFocus()
             showKeyboard()
@@ -401,7 +408,6 @@ class MainActivity : AppCompatActivity() {
         val isSearchMode = viewModel.isSearchMode.value
         val selectedCount = if (isBatchMode) noteAdapter.getSelectedNotes().size else 0
         
-        menu?.findItem(R.id.action_search)?.isVisible = !isBatchMode && !isSearchMode
        //./ menu?.findItem(R.id.action_delete_mode)?.isVisible = !isBatchMode && !isSearchMode
         menu?.findItem(R.id.action_cancel_delete)?.isVisible = isBatchMode
         menu?.findItem(R.id.action_export)?.isVisible = !isBatchMode && !isSearchMode
@@ -414,11 +420,6 @@ class MainActivity : AppCompatActivity() {
     
     override fun onOptionsItemSelected(item: MenuItem): Boolean {
         return when (item.itemId) {
-            R.id.action_search -> {
-                viewModel.enterSearchMode()
-                invalidateOptionsMenu()
-                true
-            }
             R.id.action_export -> {
                 showExportDialog()
                 true
@@ -451,6 +452,7 @@ class MainActivity : AppCompatActivity() {
         isBatchMode = true
         noteAdapter.setSelectionMode(true)
         binding.fabNewNote.visibility = View.GONE
+        binding.fabSearch.visibility = View.GONE
         binding.batchActionBar.visibility = View.VISIBLE
         invalidateOptionsMenu()
 
@@ -462,6 +464,7 @@ class MainActivity : AppCompatActivity() {
         isBatchMode = false
         noteAdapter.setSelectionMode(false)
         binding.fabNewNote.visibility = View.VISIBLE
+        binding.fabSearch.visibility = View.VISIBLE
         binding.batchActionBar.visibility = View.GONE
         invalidateOptionsMenu()
 
