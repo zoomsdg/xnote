@@ -60,7 +60,7 @@ class MainActivitySafe : AppCompatActivity() {
     private fun observeViewModel() {
         lifecycleScope.launch {
             viewModel.notes.collect { notes ->
-                noteAdapter.submitList(notes)
+                noteAdapter.setNotes(notes)
                 updateEmptyState(notes.isEmpty())
             }
         }
