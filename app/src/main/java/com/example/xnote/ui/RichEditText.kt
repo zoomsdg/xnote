@@ -39,6 +39,9 @@ class RichEditText @JvmOverloads constructor(
 
         /** 4 位及以上连续数字（"超过 3 个" = ≥ 4 个） */
         private val DIGIT_RUN_PATTERN = Regex("\\d{4,}")
+
+        /** 橙黄色（Material amber 800）——在白底上仍清晰可读 */
+        private const val DIGIT_HIGHLIGHT_COLOR = 0xFFFF8F00.toInt()
     }
     
     init {
@@ -54,7 +57,7 @@ class RichEditText @JvmOverloads constructor(
     }
 
     /**
-     * 给 4 位及以上连续数字串加黄色 + 下划线。
+     * 给 4 位及以上连续数字串加橙黄色 + 下划线。
      * 仅作显示样式，不写入数据库（每次加载都会重涂）。
      */
     private fun applyDigitHighlight(editable: Editable) {
@@ -68,7 +71,7 @@ class RichEditText @JvmOverloads constructor(
             val start = m.range.first
             val end = m.range.last + 1
             editable.setSpan(
-                DigitColorSpan(Color.YELLOW),
+                DigitColorSpan(DIGIT_HIGHLIGHT_COLOR),
                 start, end,
                 Spannable.SPAN_EXCLUSIVE_EXCLUSIVE
             )
