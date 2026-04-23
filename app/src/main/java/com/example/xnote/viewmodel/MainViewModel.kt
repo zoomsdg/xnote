@@ -145,8 +145,9 @@ class MainViewModel(
         onError: (String) -> Unit
     ) {
         val fullNotes = noteIds.mapNotNull { repository.getFullNote(it) }
+        val categoryNameById = repository.getAllCategoriesOnce().associate { it.id to it.name }
         val exportUtils = ExportImportUtils(repository.context)
-        exportUtils.exportNotes(fullNotes, password, onProgress, onSuccess, onError)
+        exportUtils.exportNotes(fullNotes, categoryNameById, password, onProgress, onSuccess, onError)
     }
     
     suspend fun importNotes(

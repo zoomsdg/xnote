@@ -31,9 +31,13 @@ class ExportImportUtils(private val context: Context) {
     
     /**
      * 导出记事为加密ZIP文件
+     *
+     * @param categoryNameById  id→分类名的映射，用于把分类信息写进 ZIP
+     *                          （跨设备重导入时按名字回落匹配）
      */
     fun exportNotes(
         notes: List<FullNote>,
+        categoryNameById: Map<String, String>,
         password: String,
         onProgress: (String) -> Unit = {},
         onSuccess: (File) -> Unit,
@@ -125,6 +129,8 @@ class ExportImportUtils(private val context: Context) {
                     ExportNote(
                         id = note.note.id,
                         title = note.note.title,
+                        categoryId = note.note.categoryId,
+                        categoryName = categoryNameById[note.note.categoryId] ?: "",
                         createdAt = note.note.createdAt,
                         updatedAt = note.note.updatedAt,
                         version = note.note.version,
@@ -352,6 +358,9 @@ class ExportImportUtils(private val context: Context) {
                     ImportNote(
                         id = exportNote.id,
                         title = exportNote.title.take(200), // 限制标题长度
+                        // 向后兼容：老版本导出的 ZIP 没有分类字段，回落到 "daily"/"日常"
+                        categoryId = exportNote.categoryId?.takeIf { it.isNotBlank() } ?: "daily",
+                        categoryName = exportNote.categoryName?.take(50)?.trim().orEmpty(),
                         createdAt = exportNote.createdAt,
                         updatedAt = exportNote.updatedAt,
                         version = exportNote.version,
@@ -377,6 +386,10 @@ class ExportImportUtils(private val context: Context) {
     data class ExportNote(
         val id: String,
         val title: String,
+        /** 原始分类 id；老版本 ZIP 可能为 null */
+        val categoryId: String? = null,
+        /** 原始分类显示名（如"工作"/"感悟"/"日常"或用户自建名）；老版本 ZIP 可能为 null */
+        val categoryName: String? = null,
         val createdAt: Long,
         val updatedAt: Long,
         val version: Int,
@@ -398,6 +411,10 @@ class ExportImportUtils(private val context: Context) {
     data class ImportNote(
         val id: String,
         val title: String,
+        /** 解析出的分类 id（老版本 ZIP 回落到 "daily"） */
+        val categoryId: String,
+        /** 解析出的分类名；无名时为空串。导入端优先用名字回落匹配/自建 */
+        val categoryName: String,
         val createdAt: Long,
         val updatedAt: Long,
         val version: Int,

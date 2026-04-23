@@ -231,11 +231,19 @@ class NoteRepository(val context: Context) {
     }
     
     suspend fun importNote(importNote: ExportImportUtils.ImportNote) {
+        // 解析分类：先按 id 精确匹配本地（兼容默认分类的固定 ID daily/work/thoughts），
+        // 再按名字回落匹配（用户自建分类跨设备 UUID 不同但名字一致），
+        // 都没有则按名字新建一个非默认分类（不给名字就回落到"日常"）。
+        val resolvedCategoryId = resolveImportCategoryId(
+            importCategoryId = importNote.categoryId,
+            importCategoryName = importNote.categoryName
+        )
+
         // 创建新的记事
         val note = Note(
             id = UUID.randomUUID().toString(), // 生成新的ID避免冲突
             title = importNote.title,
-            categoryId = "daily", // 导入的记事默认分类为日常
+            categoryId = resolvedCategoryId,
             createdAt = importNote.createdAt,
             updatedAt = importNote.updatedAt, // 使用外部记事自带的修改时间
             version = 1
@@ -312,6 +320,47 @@ class NoteRepository(val context: Context) {
         blocks.forEach { noteDao.insertBlock(it) }
     }
     
+    /**
+     * 导入记事时解析分类 id：
+     *  1. 本地已有同 id 的分类（默认分类 daily/work/thoughts 固定 id 跨设备一致）→ 用之
+     *  2. 按名字在本地查找（用户自建分类跨设备 UUID 不同但名字一致）→ 用之
+     *  3. 有非空名字但本地没有 → 创建一个非默认分类，id 用新 UUID，名字原样保留
+     *  4. 无任何可用信息 → 回落到"日常"
+     */
+    private suspend fun resolveImportCategoryId(
+        importCategoryId: String,
+        importCategoryName: String
+    ): String {
+        // 1) id 命中
+        if (importCategoryId.isNotBlank() && categoryDao.categoryExists(importCategoryId) > 0) {
+            return importCategoryId
+        }
+
+        val trimmedName = importCategoryName.trim()
+        if (trimmedName.isNotEmpty()) {
+            // 2) 名字命中
+            val byName = categoryDao.getAllCategoriesOnce()
+                .firstOrNull { it.name.trim() == trimmedName }
+            if (byName != null) return byName.id
+
+            // 3) 自建
+            val newId = UUID.randomUUID().toString()
+            categoryDao.insertCategory(
+                Category(
+                    id = newId,
+                    name = trimmedName,
+                    isDefault = false,
+                    createdAt = System.currentTimeMillis()
+                )
+            )
+            SecurityLog.i("NoteRepository", "Created category on import: $trimmedName")
+            return newId
+        }
+
+        // 4) 兜底
+        return "daily"
+    }
+
     // 分类相关方法
     suspend fun getAllCategoriesOnce(): List<Category> = categoryDao.getAllCategoriesOnce()
     
