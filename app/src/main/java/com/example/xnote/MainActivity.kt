@@ -341,6 +341,8 @@ class MainActivity : AppCompatActivity() {
             viewModel.categories.collect { categories ->
                 // 创建分类过滤chips
                 createCategoryChips(categories, viewModel.selectedCategoryId.value)
+                // 同步给适配器，列表行末尾用此查找表显示分类名
+                noteAdapter.setCategoryNameById(categories.associate { it.id to it.name })
             }
         }
         

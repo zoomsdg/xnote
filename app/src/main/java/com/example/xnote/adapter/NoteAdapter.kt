@@ -33,6 +33,13 @@ class NoteAdapter(
     private var rawNotes: List<NoteSummary> = emptyList()
     // 当前处于折叠状态的月份键集合，格式 "yyyy-MM"
     private val collapsedMonths = mutableSetOf<String>()
+    // 分类 id → 显示名 的查找表，由上游在分类数据变化时注入
+    private var categoryNameById: Map<String, String> = emptyMap()
+
+    fun setCategoryNameById(map: Map<String, String>) {
+        categoryNameById = map
+        notifyDataSetChanged()
+    }
 
     /**
      * 替换数据源。按月份分桶，保留已有折叠状态。
@@ -203,7 +210,7 @@ class NoteAdapter(
                 ivPin.visibility = if (noteSummary.isPinned) View.VISIBLE else View.GONE
 
                 tvDate.text = dateFormat.format(Date(noteSummary.lastModified))
-                tvBlockCount.text = "${noteSummary.blockCount} 项"
+                tvBlockCount.text = categoryNameById[noteSummary.categoryId] ?: ""
 
                 cbSelect.visibility = if (isSelectionMode) View.VISIBLE else View.GONE
                 cbSelect.isChecked = selectedNotes.contains(noteSummary.id)

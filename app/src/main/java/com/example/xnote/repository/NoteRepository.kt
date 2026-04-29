@@ -39,7 +39,9 @@ class NoteRepository(val context: Context) {
             val defaultCategories = listOf(
                 Category(id = "daily", name = "日常", isDefault = true, createdAt = System.currentTimeMillis()),
                 Category(id = "work", name = "工作", isDefault = true, createdAt = System.currentTimeMillis()),
-                Category(id = "thoughts", name = "感悟", isDefault = true, createdAt = System.currentTimeMillis())
+                Category(id = "thoughts", name = "感悟", isDefault = true, createdAt = System.currentTimeMillis()),
+                Category(id = "finance", name = "金融", isDefault = true, createdAt = System.currentTimeMillis()),
+                Category(id = "health", name = "健康", isDefault = true, createdAt = System.currentTimeMillis())
             )
             
             for (category in defaultCategories) {

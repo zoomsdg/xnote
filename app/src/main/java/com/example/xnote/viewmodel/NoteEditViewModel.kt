@@ -74,8 +74,10 @@ class NoteEditViewModel(
             // 返回默认分类
             listOf(
                 Category("daily", "日常", true),
-                Category("work", "工作", true), 
-                Category("thoughts", "感悟", true)
+                Category("work", "工作", true),
+                Category("thoughts", "感悟", true),
+                Category("finance", "金融", true),
+                Category("health", "健康", true)
             )
         }
     }
