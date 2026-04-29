@@ -246,6 +246,7 @@ class NoteRepository(val context: Context) {
             id = UUID.randomUUID().toString(), // 生成新的ID避免冲突
             title = importNote.title,
             categoryId = resolvedCategoryId,
+            isPinned = importNote.isPinned,
             createdAt = importNote.createdAt,
             updatedAt = importNote.updatedAt, // 使用外部记事自带的修改时间
             version = 1

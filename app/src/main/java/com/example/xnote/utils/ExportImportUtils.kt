@@ -131,6 +131,7 @@ class ExportImportUtils(private val context: Context) {
                         title = note.note.title,
                         categoryId = note.note.categoryId,
                         categoryName = categoryNameById[note.note.categoryId] ?: "",
+                        isPinned = note.note.isPinned,
                         createdAt = note.note.createdAt,
                         updatedAt = note.note.updatedAt,
                         version = note.note.version,
@@ -361,6 +362,8 @@ class ExportImportUtils(private val context: Context) {
                         // 向后兼容：老版本导出的 ZIP 没有分类字段，回落到 "daily"/"日常"
                         categoryId = exportNote.categoryId?.takeIf { it.isNotBlank() } ?: "daily",
                         categoryName = exportNote.categoryName?.take(50)?.trim().orEmpty(),
+                        // 向后兼容：老版本 ZIP 没有置顶字段，回落到 false
+                        isPinned = exportNote.isPinned ?: false,
                         createdAt = exportNote.createdAt,
                         updatedAt = exportNote.updatedAt,
                         version = exportNote.version,
@@ -390,6 +393,8 @@ class ExportImportUtils(private val context: Context) {
         val categoryId: String? = null,
         /** 原始分类显示名（如"工作"/"感悟"/"日常"或用户自建名）；老版本 ZIP 可能为 null */
         val categoryName: String? = null,
+        /** 是否置顶；老版本 ZIP 可能为 null（导入时回落到 false） */
+        val isPinned: Boolean? = null,
         val createdAt: Long,
         val updatedAt: Long,
         val version: Int,
@@ -415,6 +420,8 @@ class ExportImportUtils(private val context: Context) {
         val categoryId: String,
         /** 解析出的分类名；无名时为空串。导入端优先用名字回落匹配/自建 */
         val categoryName: String,
+        /** 是否置顶；老版本 ZIP 回落到 false */
+        val isPinned: Boolean,
         val createdAt: Long,
         val updatedAt: Long,
         val version: Int,
