@@ -4,7 +4,7 @@
 
     <item
         android:id="@+id/action_export"
-        android:title="导出"
+        android:title="导出全部"
         app:showAsAction="never" />
 
     <item
