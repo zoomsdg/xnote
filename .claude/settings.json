@@ -1,5 +1,5 @@
 {
-#  "model": "claude-sonnet-4",
+//  "model": "claude-sonnet-4",
   "systemPrompt": "You are a senior developer working on this project",
   "allowedTools": [
     "Edit",
