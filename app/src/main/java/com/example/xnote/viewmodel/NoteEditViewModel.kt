@@ -82,7 +82,7 @@ class NoteEditViewModel(
         }
     }
     
-    suspend fun createCategory(categoryName: String): String {
+    suspend fun createCategory(categoryName: String): NoteRepository.CategoryCreateResult {
         return repository.createCategory(categoryName)
     }
     

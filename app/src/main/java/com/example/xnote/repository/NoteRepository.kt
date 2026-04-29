@@ -30,29 +30,34 @@ class NoteRepository(val context: Context) {
     }
     
     /**
-     * 确保默认分类存在
+     * 首次启动时种子默认分类。靠 SharedPreferences 标记保证只跑一次。
+     * 之前的实现每次实例化都补齐缺失项，导致用户删除的预置分类被反复复活。
      */
     private suspend fun ensureDefaultCategoriesExist() {
         try {
-            SecurityLog.d("NoteRepository", "Initializing default categories")
-            // 检查并创建默认分类
+            val prefs = context.getSharedPreferences("xnote_prefs", Context.MODE_PRIVATE)
+            val seededKey = "default_categories_seeded_v2"
+            if (prefs.getBoolean(seededKey, false)) return
+
+            SecurityLog.d("NoteRepository", "Seeding default categories (one-time)")
+            val now = System.currentTimeMillis()
             val defaultCategories = listOf(
-                Category(id = "daily", name = "日常", isDefault = true, createdAt = System.currentTimeMillis()),
-                Category(id = "work", name = "工作", isDefault = true, createdAt = System.currentTimeMillis()),
-                Category(id = "thoughts", name = "感悟", isDefault = true, createdAt = System.currentTimeMillis()),
-                Category(id = "finance", name = "金融", isDefault = true, createdAt = System.currentTimeMillis()),
-                Category(id = "health", name = "健康", isDefault = true, createdAt = System.currentTimeMillis())
+                Category(id = "daily", name = "日常", isDefault = true, createdAt = now),
+                Category(id = "work", name = "工作", isDefault = true, createdAt = now),
+                Category(id = "thoughts", name = "感悟", isDefault = true, createdAt = now),
+                Category(id = "finance", name = "金融", isDefault = true, createdAt = now),
+                Category(id = "health", name = "健康", isDefault = true, createdAt = now)
             )
-            
+
             for (category in defaultCategories) {
-                val exists = categoryDao.categoryExists(category.id)
-                if (exists == 0) {
+                if (categoryDao.categoryExists(category.id) == 0) {
                     categoryDao.insertCategory(category)
-                    SecurityLog.d("NoteRepository", "Created default category")
                 }
             }
+
+            prefs.edit().putBoolean(seededKey, true).apply()
         } catch (e: Exception) {
-            SecurityLog.e("NoteRepository", "Failed to initialize default categories", e)
+            SecurityLog.e("NoteRepository", "Failed to seed default categories", e)
         }
     }
     
@@ -369,17 +374,29 @@ class NoteRepository(val context: Context) {
     
     suspend fun getCategoryById(categoryId: String): Category? = categoryDao.getCategoryById(categoryId)
     
-    suspend fun createCategory(categoryName: String): String {
+    /**
+     * 新建分类。若已存在同名分类（trim + 忽略大小写），直接复用其 id。
+     */
+    suspend fun createCategory(categoryName: String): CategoryCreateResult {
+        val trimmed = categoryName.trim()
+        val existing = categoryDao.getAllCategoriesOnce()
+            .firstOrNull { it.name.trim().equals(trimmed, ignoreCase = true) }
+        if (existing != null) {
+            return CategoryCreateResult(existing.id, isNew = false)
+        }
+
         val categoryId = UUID.randomUUID().toString()
         val category = Category(
             id = categoryId,
-            name = categoryName,
+            name = trimmed,
             isDefault = false,
             createdAt = System.currentTimeMillis()
         )
         categoryDao.insertCategory(category)
-        return categoryId
+        return CategoryCreateResult(categoryId, isNew = true)
     }
+
+    data class CategoryCreateResult(val id: String, val isNew: Boolean)
     
     suspend fun updateNoteCategory(noteId: String, categoryId: String) {
         val note = getNoteById(noteId)

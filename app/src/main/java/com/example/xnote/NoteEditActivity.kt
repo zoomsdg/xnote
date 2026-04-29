@@ -774,11 +774,16 @@ class NoteEditActivity : AppCompatActivity() {
     private fun createNewCategory(categoryName: String) {
         lifecycleScope.launch {
             try {
-                val newCategoryId = viewModel.createCategory(categoryName)
-                currentCategoryId = newCategoryId
+                val result = viewModel.createCategory(categoryName)
+                currentCategoryId = result.id
                 hasContentChanged = true
                 updateCategoryDisplay()
-                Toast.makeText(this@NoteEditActivity, "已创建并设置分类: $categoryName", Toast.LENGTH_SHORT).show()
+                val msg = if (result.isNew) {
+                    "已创建并设置分类: $categoryName"
+                } else {
+                    "已存在同名分类，已使用现有: $categoryName"
+                }
+                Toast.makeText(this@NoteEditActivity, msg, Toast.LENGTH_SHORT).show()
             } catch (e: Exception) {
                 Toast.makeText(this@NoteEditActivity, "创建分类失败", Toast.LENGTH_SHORT).show()
             }
