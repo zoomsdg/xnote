@@ -70,9 +70,9 @@ class NoteAdapter(
             val collapsed = collapsedMonths.contains(key)
 
             out.add(NoteListItem.MonthHeader(key, label, bucket.size, collapsed))
-            if (!collapsed) {
-                bucket.forEach { out.add(NoteListItem.NoteEntry(it)) }
-            }
+            // 折叠时仍显示置顶纪事；未折叠时显示全部
+            val visible = if (collapsed) bucket.filter { it.isPinned } else bucket
+            visible.forEach { out.add(NoteListItem.NoteEntry(it)) }
         }
         submitList(out)
     }
