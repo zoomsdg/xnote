@@ -255,8 +255,12 @@ class NoteEditActivity : AppCompatActivity() {
     
     private fun updateModifiedTime(timestamp: Long) {
         val formatter = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault())
+        val dateFormatter = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
         val formattedTime = formatter.format(Date(timestamp))
-        binding.tvModifiedTime.text = "修改于 $formattedTime"
+        val createdText = currentNote?.note?.createdAt?.let {
+            " / 创建于 ${dateFormatter.format(Date(it))}"
+        } ?: ""
+        binding.tvModifiedTime.text = "修改于 $formattedTime$createdText"
         binding.tvModifiedTime.visibility = View.VISIBLE
         
         // 确保分类标签也显示

@@ -40,11 +40,14 @@ class NoteEditViewModel(
         viewModelScope.launch {
             try {
                 _saveState.value = SaveState.Saving
-                
+
+                val existing = repository.getNoteById(noteId)
                 val note = Note(
                     id = noteId,
                     title = title,
                     categoryId = categoryId,
+                    isPinned = existing?.isPinned ?: false,
+                    createdAt = existing?.createdAt ?: System.currentTimeMillis(),
                     updatedAt = System.currentTimeMillis()
                 )
                 

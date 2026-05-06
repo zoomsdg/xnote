@@ -28,6 +28,11 @@ class ExportImportUtils(private val context: Context) {
     
     private val gson = Gson()
     private val dateFormat = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault())
+    private val modifiedFormat = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault())
+    private val createdFormat = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
+
+    private fun timeInfo(updatedAt: Long, createdAt: Long): String =
+        "修改于 ${modifiedFormat.format(Date(updatedAt))} / 创建于 ${createdFormat.format(Date(createdAt))}"
     
     /**
      * 导出记事为加密ZIP文件
@@ -60,8 +65,11 @@ class ExportImportUtils(private val context: Context) {
             val exportData = mutableListOf<ExportNote>()
             
             for (note in notes) {
+                val title = note.note.title.ifBlank { "无标题" }
+                onProgress("导出：$title (${timeInfo(note.note.updatedAt, note.note.createdAt)})")
+
                 val exportBlocks = mutableListOf<ExportBlock>()
-                
+
                 for (block in note.blocks) {
                     val exportBlock = when (block.type) {
                         BlockType.TEXT -> {
@@ -288,8 +296,11 @@ class ExportImportUtils(private val context: Context) {
             val importNotes = mutableListOf<ImportNote>()
             
             for (exportNote in exportData) {
+                val title = exportNote.title.ifBlank { "无标题" }
+                onProgress("导入：$title (${timeInfo(exportNote.updatedAt, exportNote.createdAt)})")
+
                 val importBlocks = mutableListOf<ImportBlock>()
-                
+
                 for (exportBlock in exportNote.blocks) {
                     val importBlock = when (exportBlock.type) {
                         "text" -> ImportBlock(
