@@ -9,7 +9,7 @@
   ],
  "permissions": {
     "deny": [
-      "Read([\n  \"dist/**\")",
+      "Read(\"dist/**\")",
       "Read(\"build/**\")",
       "Read(\"out/**\")",
       "Read(\"tmp/**\")",

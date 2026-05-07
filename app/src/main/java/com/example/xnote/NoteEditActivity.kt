@@ -12,6 +12,7 @@ import android.provider.MediaStore
 import android.text.TextWatcher
 import android.view.View
 import android.widget.Toast
+import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.appcompat.app.AlertDialog
@@ -93,6 +94,13 @@ class NoteEditActivity : AppCompatActivity() {
         setupUI()
         loadNote()
         observeViewModel()
+
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                handleNoteBeforeExit()
+                finish()
+            }
+        })
     }
     
     private fun initComponents() {
@@ -418,7 +426,7 @@ class NoteEditActivity : AppCompatActivity() {
     
     private fun takePhoto() {
         if (PermissionUtils.hasCameraPermission(this)) {
-            ImageUtils.createTempCameraFile(this)?.let { (file, uri) ->
+            ImageUtils.createTempCameraFile(this)?.let { (_, uri) ->
                 takePictureLauncher.launch(uri)
             }
         } else {
@@ -595,7 +603,7 @@ class NoteEditActivity : AppCompatActivity() {
                         // 准备并播放新音频
                         if (audioPlayer.prepare(url)) {
                             // 等待异步准备完成后播放
-                            playWhenPrepared(block.id, url)
+                            playWhenPrepared(block.id)
                         }
                     }
                 }
@@ -604,7 +612,7 @@ class NoteEditActivity : AppCompatActivity() {
                 updateDebugStatus("显示图片大图")
                 // 显示大图
                 block.url?.let { imagePath ->
-                    showImageViewer(imagePath, block.width ?: 0, block.height ?: 0)
+                    showImageViewer(imagePath)
                 }
             }
             else -> {
@@ -613,7 +621,7 @@ class NoteEditActivity : AppCompatActivity() {
         }
     }
     
-    private fun playWhenPrepared(blockId: String, url: String) {
+    private fun playWhenPrepared(blockId: String) {
         val handler = Handler(Looper.getMainLooper())
         val checkRunnable = object : Runnable {
             override fun run() {
@@ -689,12 +697,6 @@ class NoteEditActivity : AppCompatActivity() {
             } else 0f
             binding.richEditText.updateAudioPlaybackState(blockId, false, progress)
         }
-    }
-    
-    @Deprecated("Deprecated in Java")
-    override fun onBackPressed() {
-        handleNoteBeforeExit()
-        super.onBackPressed()
     }
     
     private fun handleNoteBeforeExit() {
@@ -794,7 +796,7 @@ class NoteEditActivity : AppCompatActivity() {
         }
     }
     
-    private fun showImageViewer(imagePath: String, width: Int, height: Int) {
+    private fun showImageViewer(imagePath: String) {
         try {
             // 先检查文件是否存在
             val file = java.io.File(imagePath)
