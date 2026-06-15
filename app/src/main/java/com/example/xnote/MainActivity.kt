@@ -63,7 +63,9 @@ class MainActivity : AppCompatActivity() {
     
     private fun setupUI() {
         setSupportActionBar(binding.toolbar)
-        
+        // 顶行不再显示「XNote」标题，改为内嵌标签页切换条；右上角溢出菜单（导入/导出）保留
+        supportActionBar?.setDisplayShowTitleEnabled(false)
+
         binding.fabNewNote.setOnClickListener {
             createNewNote()
         }
