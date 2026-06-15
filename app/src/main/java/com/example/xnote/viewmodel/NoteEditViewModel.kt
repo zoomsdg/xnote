@@ -46,6 +46,9 @@ class NoteEditViewModel(
                     id = noteId,
                     title = title,
                     categoryId = categoryId,
+                    // 保留原有标签页归属与导入来源 id，避免编辑保存时被重置
+                    notebookId = existing?.notebookId ?: NoteRepository.DEFAULT_NOTEBOOK_ID,
+                    sourceId = existing?.sourceId,
                     isPinned = existing?.isPinned ?: false,
                     createdAt = existing?.createdAt ?: System.currentTimeMillis(),
                     updatedAt = System.currentTimeMillis()

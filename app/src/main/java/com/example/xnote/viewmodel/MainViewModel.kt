@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.example.xnote.data.Category
+import com.example.xnote.data.Notebook
 import com.example.xnote.data.NoteSummary
 import com.example.xnote.repository.NoteRepository
 import com.example.xnote.utils.ExportImportUtils
@@ -17,75 +18,110 @@ import java.io.File
 class MainViewModel(
     private val repository: NoteRepository
 ) : ViewModel() {
-    
+
     private val _categories = MutableStateFlow<List<Category>>(emptyList())
     val categories: StateFlow<List<Category>> = _categories.asStateFlow()
-    
+
     private val _selectedCategoryId = MutableStateFlow<String?>(null)
     val selectedCategoryId: StateFlow<String?> = _selectedCategoryId.asStateFlow()
-    
+
+    // ---------- 标签页（tab）状态 ----------
+    private val _notebooks = MutableStateFlow<List<Notebook>>(emptyList())
+    val notebooks: StateFlow<List<Notebook>> = _notebooks.asStateFlow()
+
+    private val _selectedNotebookId = MutableStateFlow(NoteRepository.DEFAULT_NOTEBOOK_ID)
+    val selectedNotebookId: StateFlow<String> = _selectedNotebookId.asStateFlow()
+
     private val _notes = MutableStateFlow<List<NoteSummary>>(emptyList())
     val notes: StateFlow<List<NoteSummary>> = _notes.asStateFlow()
-    
+
     private val _isSearchMode = MutableStateFlow(false)
     val isSearchMode: StateFlow<Boolean> = _isSearchMode.asStateFlow()
-    
+
     private val _searchQuery = MutableStateFlow("")
     val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
-    
+
     private var searchJob: Job? = null
-    
+
     init {
         loadCategories()
+        loadNotebooks()
         loadNotes()
     }
-    
+
     private fun loadCategories() {
         viewModelScope.launch {
             _categories.value = repository.getAllCategories()
         }
     }
-    
+
     fun refreshCategories() {
         loadCategories()
     }
-    
+
+    private fun loadNotebooks() {
+        viewModelScope.launch {
+            val list = repository.getAllNotebooksOnce()
+            _notebooks.value = list
+            // 当前选中的标签页若已不存在（如被删除），回落到默认标签页
+            if (list.none { it.id == _selectedNotebookId.value }) {
+                _selectedNotebookId.value = NoteRepository.DEFAULT_NOTEBOOK_ID
+            }
+        }
+    }
+
+    fun refreshNotebooks() {
+        loadNotebooks()
+    }
+
+    fun selectNotebook(notebookId: String) {
+        if (_selectedNotebookId.value == notebookId) return
+        _selectedNotebookId.value = notebookId
+        if (_isSearchMode.value) {
+            search(_searchQuery.value)
+        } else {
+            loadNotes()
+        }
+    }
+
     private fun loadNotes() {
         searchJob?.cancel()
         searchJob = viewModelScope.launch {
+            val notebookId = _selectedNotebookId.value
             val selectedCategory = _selectedCategoryId.value
             val notesFlow = if (selectedCategory == null) {
-                repository.getNoteSummaries()
+                repository.getNoteSummariesByNotebook(notebookId)
             } else {
-                repository.getNoteSummariesByCategory(selectedCategory)
+                repository.getNoteSummariesByNotebookAndCategory(notebookId, selectedCategory)
             }
-            
+
             notesFlow.collect { noteList ->
                 _notes.value = noteList
             }
         }
     }
-    
+
     fun selectCategory(categoryId: String?) {
         _selectedCategoryId.value = categoryId
         if (!_isSearchMode.value) {
             loadNotes()
         }
     }
-    
+
     fun search(query: String) {
         _searchQuery.value = query
         searchJob?.cancel()
-        
+
         if (query.isBlank()) {
-            // 如果搜索为空，显示所有记事
+            // 如果搜索为空，显示当前标签页内的所有记事
             loadNotes()
         } else {
-            // 执行智能搜索
+            // 执行标签页作用域内的智能搜索
             searchJob = viewModelScope.launch {
-                repository.smartSearchNoteSummaries(query).collect { searchResults ->
-                    _notes.value = searchResults
-                }
+                repository.smartSearchNoteSummariesInNotebook(_selectedNotebookId.value, query)
+                    .collect { searchResults ->
+                        _notes.value = searchResults
+                    }
             }
         }
     }
@@ -102,7 +138,31 @@ class MainViewModel(
     
     //./suspend fun createNewNote(title: String = "无标题"): String {
     suspend fun createNewNote(title: String = ""): String {
-        return repository.createNewNote(title)
+        // 新建纪事归入当前所在标签页
+        return repository.createNewNote(title, _selectedNotebookId.value)
+    }
+
+    // ---------- 标签页（tab）管理 ----------
+
+    suspend fun createNotebook(name: String): Notebook {
+        val notebook = repository.createNotebook(name)
+        loadNotebooks()
+        return notebook
+    }
+
+    suspend fun renameNotebook(notebookId: String, newName: String) {
+        repository.renameNotebook(notebookId, newName)
+        loadNotebooks()
+    }
+
+    suspend fun deleteNotebook(notebookId: String) {
+        repository.deleteNotebook(notebookId)
+        // 若删除的是当前标签页，切回默认标签页
+        if (_selectedNotebookId.value == notebookId) {
+            _selectedNotebookId.value = NoteRepository.DEFAULT_NOTEBOOK_ID
+        }
+        loadNotebooks()
+        loadNotes()
     }
     
     suspend fun deleteCategory(categoryId: String) {
@@ -150,35 +210,47 @@ class MainViewModel(
         exportUtils.exportNotes(fullNotes, categoryNameById, password, onProgress, onSuccess, onError)
     }
     
+    /**
+     * 导入备份 ZIP 到指定标签页并去重。
+     *
+     * @param existingNotebookId 目标已有标签页 id；与 [newNotebookName] 二选一。
+     * @param newNotebookName    新建标签页名（仅在密码校验通过后才真正创建，避免残留空标签页）。
+     * @param onSuccess          返回去重结果（新增/更新/跳过条数）与最终目标标签页 id。
+     */
     suspend fun importNotes(
         zipFile: File,
         password: String,
-        overwrite: Boolean,
+        existingNotebookId: String?,
+        newNotebookName: String?,
         onProgress: (String) -> Unit,
-        onSuccess: (Int) -> Unit,
+        onSuccess: (NoteRepository.ImportSummary, String) -> Unit,
         onError: (String) -> Unit
     ) {
         val exportUtils = ExportImportUtils(repository.context)
-        exportUtils.importNotes(zipFile, password, onProgress, 
+        // 解析（含密码校验）成功后才进入导入与去重；密码错误走 onError，不会创建新标签页。
+        exportUtils.importNotes(zipFile, password, onProgress,
             onSuccess = { importNotes ->
                 viewModelScope.launch {
                     try {
-                        var importedCount = 0
-                        
-                        if (overwrite) {
-                            // 清空所有现有记事
-                            repository.deleteAllNotes()
+                        // 密码已校验通过：此时才创建新标签页
+                        val targetNotebookId = when {
+                            !newNotebookName.isNullOrBlank() ->
+                                repository.createNotebook(newNotebookName).id
+                            !existingNotebookId.isNullOrBlank() -> existingNotebookId
+                            else -> NoteRepository.DEFAULT_NOTEBOOK_ID
                         }
-                        
-                        for (importNote in importNotes) {
-                            repository.importNote(importNote)
-                            importedCount++
-                        }
-                        
+
+                        val summary = repository.importNotesIntoNotebook(importNotes, targetNotebookId)
+
                         // 清理临时文件
                         importNotes.firstOrNull()?.tempDir?.deleteRecursively()
-                        
-                        onSuccess(importedCount)
+
+                        // 刷新标签页清单，并切换到导入目标标签页
+                        loadNotebooks()
+                        _selectedNotebookId.value = targetNotebookId
+                        loadNotes()
+
+                        onSuccess(summary, targetNotebookId)
                     } catch (e: Exception) {
                         onError("导入失败：${e.message}")
                     }

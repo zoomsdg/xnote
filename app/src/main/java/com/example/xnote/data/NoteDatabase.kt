@@ -14,15 +14,16 @@ import net.sqlcipher.database.SupportFactory
  * Room 数据库
  */
 @Database(
-    entities = [Note::class, NoteBlock::class, Category::class],
-    version = 3,
+    entities = [Note::class, NoteBlock::class, Category::class, Notebook::class],
+    version = 4,
     exportSchema = false
 )
 @TypeConverters(Converters::class)
 abstract class NoteDatabase : RoomDatabase() {
-    
+
     abstract fun noteDao(): NoteDao
     abstract fun categoryDao(): CategoryDao
+    abstract fun notebookDao(): NotebookDao
     
     companion object {
         @Volatile
@@ -56,7 +57,32 @@ abstract class NoteDatabase : RoomDatabase() {
                 database.execSQL("ALTER TABLE notes ADD COLUMN isPinned INTEGER NOT NULL DEFAULT 0")
             }
         }
-        
+
+        private val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                // 创建标签页（tab）表
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS notebooks (
+                        id TEXT NOT NULL PRIMARY KEY,
+                        name TEXT NOT NULL,
+                        `order` INTEGER NOT NULL DEFAULT 0,
+                        createdAt INTEGER NOT NULL
+                    )
+                """)
+
+                // 默认标签页（不可删除、可重命名），承载全部历史纪事
+                database.execSQL(
+                    "INSERT INTO notebooks (id, name, `order`, createdAt) " +
+                    "VALUES ('local', '本地纪事', 0, ${System.currentTimeMillis()})"
+                )
+
+                // 为notes表添加标签页归属与导入来源 id 字段
+                // 历史纪事全部归入默认标签页 'local'
+                database.execSQL("ALTER TABLE notes ADD COLUMN notebookId TEXT NOT NULL DEFAULT 'local'")
+                database.execSQL("ALTER TABLE notes ADD COLUMN sourceId TEXT")
+            }
+        }
+
         fun getDatabase(context: Context): NoteDatabase {
             return INSTANCE ?: synchronized(this) {
                 val appCtx = context.applicationContext
@@ -70,7 +96,7 @@ abstract class NoteDatabase : RoomDatabase() {
                     // clearPassphrase=false: 让 SupportFactory 保留 passphrase 字节，
                     // 以防 Room 在生命周期内需要重建 SupportHelper 时取不到密钥
                     .openHelperFactory(SupportFactory(passphrase, null, false))
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
                     .build()
                 INSTANCE = instance
                 instance

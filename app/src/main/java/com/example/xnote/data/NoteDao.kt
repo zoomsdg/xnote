@@ -131,6 +131,92 @@ interface NoteDao {
         ORDER BY n.isPinned DESC, n.updatedAt DESC
     """)
     fun getNoteSummariesByCategory(categoryId: String): Flow<List<NoteSummary>>
+
+    // ---------- 标签页（tab）作用域内的列表/搜索 ----------
+
+    @Query("""
+        SELECT
+        n.id as id,
+        n.title as title,
+        COALESCE(GROUP_CONCAT(CASE WHEN b.type = 'TEXT' THEN b.text ELSE '' END, ' '), '') as preview,
+        n.updatedAt as lastModified,
+        COUNT(b.id) as blockCount,
+        n.categoryId as categoryId,
+        n.isPinned as isPinned
+        FROM notes n
+        LEFT JOIN note_blocks b ON n.id = b.noteId
+        WHERE n.notebookId = :notebookId
+        GROUP BY n.id
+        ORDER BY n.isPinned DESC, n.updatedAt DESC
+    """)
+    fun getNoteSummariesByNotebook(notebookId: String): Flow<List<NoteSummary>>
+
+    @Query("""
+        SELECT
+        n.id as id,
+        n.title as title,
+        COALESCE(GROUP_CONCAT(CASE WHEN b.type = 'TEXT' THEN b.text ELSE '' END, ' '), '') as preview,
+        n.updatedAt as lastModified,
+        COUNT(b.id) as blockCount,
+        n.categoryId as categoryId,
+        n.isPinned as isPinned
+        FROM notes n
+        LEFT JOIN note_blocks b ON n.id = b.noteId
+        WHERE n.notebookId = :notebookId AND n.categoryId = :categoryId
+        GROUP BY n.id
+        ORDER BY n.isPinned DESC, n.updatedAt DESC
+    """)
+    fun getNoteSummariesByNotebookAndCategory(
+        notebookId: String,
+        categoryId: String
+    ): Flow<List<NoteSummary>>
+
+    @Query("""
+        SELECT
+        n.id as id,
+        n.title as title,
+        COALESCE(GROUP_CONCAT(CASE WHEN b.type = 'TEXT' THEN b.text ELSE '' END, ' '), '') as preview,
+        n.updatedAt as lastModified,
+        COUNT(b.id) as blockCount,
+        n.categoryId as categoryId,
+        n.isPinned as isPinned
+        FROM notes n
+        LEFT JOIN note_blocks b ON n.id = b.noteId
+        WHERE n.notebookId = :notebookId
+        AND (n.title LIKE '%' || :searchQuery || '%'
+        OR b.text LIKE '%' || :searchQuery || '%')
+        GROUP BY n.id
+        ORDER BY n.isPinned DESC, n.updatedAt DESC
+    """)
+    fun searchNoteSummariesInNotebook(
+        notebookId: String,
+        searchQuery: String
+    ): Flow<List<NoteSummary>>
+
+    @Query("""
+        SELECT
+        n.id as id,
+        n.title as title,
+        COALESCE(GROUP_CONCAT(CASE WHEN b.type = 'TEXT' THEN b.text ELSE '' END, ' '), '') as preview,
+        n.updatedAt as lastModified,
+        COUNT(b.id) as blockCount,
+        n.categoryId as categoryId,
+        n.isPinned as isPinned
+        FROM notes n
+        LEFT JOIN note_blocks b ON n.id = b.noteId
+        WHERE n.notebookId = :notebookId
+        AND (n.title LIKE '%' || :searchQuery || '%'
+        OR b.text LIKE '%' || :searchQuery || '%'
+        OR n.updatedAt BETWEEN :startTime AND :endTime)
+        GROUP BY n.id
+        ORDER BY n.isPinned DESC, n.updatedAt DESC
+    """)
+    fun searchNoteSummariesWithDateOrTextInNotebook(
+        notebookId: String,
+        searchQuery: String,
+        startTime: Long,
+        endTime: Long
+    ): Flow<List<NoteSummary>>
     
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertNote(note: Note)
@@ -158,6 +244,16 @@ interface NoteDao {
     
     @Query("SELECT * FROM notes WHERE categoryId = :categoryId")
     suspend fun getAllNotesInCategory(categoryId: String): List<Note>
+
+    @Query("SELECT * FROM notes WHERE notebookId = :notebookId")
+    suspend fun getAllNotesInNotebook(notebookId: String): List<Note>
+
+    @Query("SELECT COUNT(*) FROM notes WHERE notebookId = :notebookId")
+    suspend fun countNotesInNotebook(notebookId: String): Int
+
+    /** 删除标签页时把其下纪事整体迁回另一个标签页（通常是默认标签页） */
+    @Query("UPDATE notes SET notebookId = :toNotebookId WHERE notebookId = :fromNotebookId")
+    suspend fun moveNotesToNotebook(fromNotebookId: String, toNotebookId: String)
     
     @Transaction
     suspend fun saveFullNote(fullNote: FullNote) {

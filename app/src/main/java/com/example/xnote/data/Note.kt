@@ -15,6 +15,17 @@ data class Note(
 
     val categoryId: String = "daily",
 
+    /**
+     * 所属标签页（tab / 笔记本）。纯本地概念，不进导出 ZIP。
+     * 历史数据迁移到默认标签页 "local"。
+     */
+    val notebookId: String = "local",
+
+    /**
+     * 导入来源纪事的原始 id，用于导入去重；本地新建纪事为 null。不进导出 ZIP。
+     */
+    val sourceId: String? = null,
+
     val isPinned: Boolean = false,
 
     val createdAt: Long = System.currentTimeMillis(),

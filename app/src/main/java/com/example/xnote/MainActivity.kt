@@ -58,6 +58,7 @@ class MainActivity : AppCompatActivity() {
         super.onResume()
         // 重新加载分类数据，确保从编辑页面返回时能看到新创建的分类
         viewModel.refreshCategories()
+        viewModel.refreshNotebooks()
     }
     
     private fun setupUI() {
@@ -244,6 +245,170 @@ class MainActivity : AppCompatActivity() {
         return categoryId == "daily" || categoryId == "work" || categoryId == "thoughts"
     }
 
+    // ---------- 标签页（tab）切换条 ----------
+
+    private fun createNotebookChips(
+        notebooks: List<com.example.xnote.data.Notebook>,
+        selectedNotebookId: String
+    ) {
+        binding.notebookChipsContainer.removeAllViews()
+
+        notebooks.forEach { notebook ->
+            val chip = createNotebookChip(notebook, notebook.id == selectedNotebookId)
+            binding.notebookChipsContainer.addView(chip)
+        }
+
+        // 末尾「+」新建标签页按钮
+        val addButton = Button(this).apply {
+            text = "＋"
+            setBackgroundResource(R.drawable.category_chip_selector)
+            setTextColor(getColor(R.color.primary_text))
+            setPadding(28, 12, 28, 12)
+            textSize = 14f
+            minWidth = 0
+            minHeight = 0
+            minimumWidth = 0
+            minimumHeight = 0
+            gravity = android.view.Gravity.CENTER
+            val params = android.widget.LinearLayout.LayoutParams(
+                android.widget.LinearLayout.LayoutParams.WRAP_CONTENT,
+                android.widget.LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+            params.setMargins(16, 0, 0, 0)
+            layoutParams = params
+            contentDescription = "新建标签页"
+            setOnClickListener { showCreateNotebookDialog() }
+        }
+        binding.notebookChipsContainer.addView(addButton)
+    }
+
+    private fun createNotebookChip(
+        notebook: com.example.xnote.data.Notebook,
+        isSelected: Boolean
+    ): Button {
+        return Button(this).apply {
+            text = notebook.name
+            this.isSelected = isSelected
+            setBackgroundResource(R.drawable.category_chip_selector)
+            setTextColor(if (isSelected) getColor(R.color.white) else getColor(R.color.primary_text))
+            setPadding(28, 12, 28, 12)
+            textSize = 14f
+            if (isSelected) {
+                setTypeface(typeface, android.graphics.Typeface.BOLD)
+            }
+            minWidth = 0
+            minHeight = 0
+            minimumWidth = 0
+            minimumHeight = 0
+            gravity = android.view.Gravity.CENTER
+
+            val params = android.widget.LinearLayout.LayoutParams(
+                android.widget.LinearLayout.LayoutParams.WRAP_CONTENT,
+                android.widget.LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+            params.setMargins(16, 0, 0, 0)
+            layoutParams = params
+
+            setOnClickListener {
+                viewModel.selectNotebook(notebook.id)
+            }
+
+            // 长按管理标签页（重命名 / 删除）
+            setOnLongClickListener {
+                showNotebookManageMenu(notebook)
+                true
+            }
+        }
+    }
+
+    private fun showNotebookManageMenu(notebook: com.example.xnote.data.Notebook) {
+        val isDefault = notebook.id == com.example.xnote.repository.NoteRepository.DEFAULT_NOTEBOOK_ID
+        val options = if (isDefault) {
+            arrayOf("重命名")
+        } else {
+            arrayOf("重命名", "删除")
+        }
+
+        AlertDialog.Builder(this)
+            .setTitle(notebook.name)
+            .setItems(options) { _, which ->
+                when (options[which]) {
+                    "重命名" -> showRenameNotebookDialog(notebook)
+                    "删除" -> showDeleteNotebookDialog(notebook)
+                }
+            }
+            .show()
+    }
+
+    private fun showCreateNotebookDialog() {
+        val editText = EditText(this).apply {
+            hint = "请输入标签页名称"
+            inputType = android.text.InputType.TYPE_CLASS_TEXT
+        }
+
+        AlertDialog.Builder(this)
+            .setTitle("新建标签页")
+            .setView(editText)
+            .setPositiveButton("创建") { _, _ ->
+                val name = editText.text.toString().trim()
+                if (name.isEmpty()) {
+                    Toast.makeText(this, "名称不能为空", Toast.LENGTH_SHORT).show()
+                    return@setPositiveButton
+                }
+                lifecycleScope.launch {
+                    val notebook = viewModel.createNotebook(name)
+                    // 创建后切换过去
+                    viewModel.selectNotebook(notebook.id)
+                    Toast.makeText(this@MainActivity, "已创建标签页「$name」", Toast.LENGTH_SHORT).show()
+                }
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    private fun showRenameNotebookDialog(notebook: com.example.xnote.data.Notebook) {
+        val editText = EditText(this).apply {
+            setText(notebook.name)
+            setSelection(notebook.name.length)
+            inputType = android.text.InputType.TYPE_CLASS_TEXT
+        }
+
+        AlertDialog.Builder(this)
+            .setTitle("重命名标签页")
+            .setView(editText)
+            .setPositiveButton("保存") { _, _ ->
+                val name = editText.text.toString().trim()
+                if (name.isEmpty()) {
+                    Toast.makeText(this, "名称不能为空", Toast.LENGTH_SHORT).show()
+                    return@setPositiveButton
+                }
+                lifecycleScope.launch {
+                    viewModel.renameNotebook(notebook.id, name)
+                    Toast.makeText(this@MainActivity, "已重命名", Toast.LENGTH_SHORT).show()
+                }
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    private fun showDeleteNotebookDialog(notebook: com.example.xnote.data.Notebook) {
+        AlertDialog.Builder(this)
+            .setTitle("删除标签页")
+            .setMessage("确定要删除标签页「${notebook.name}」吗？\n\n该标签页下的所有记事将迁回默认标签页「${com.example.xnote.repository.NoteRepository.DEFAULT_NOTEBOOK_NAME}」，不会被删除。")
+            .setPositiveButton("删除") { _, _ ->
+                lifecycleScope.launch {
+                    try {
+                        viewModel.deleteNotebook(notebook.id)
+                        Toast.makeText(this@MainActivity, "已删除标签页「${notebook.name}」", Toast.LENGTH_SHORT).show()
+                    } catch (e: Exception) {
+                        Toast.makeText(this@MainActivity, "默认标签页不可删除", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
     private fun showContextMenuForNote(noteSummary: NoteSummary) {
         val popupMenu = android.widget.PopupMenu(this, binding.recyclerView)
         popupMenu.menuInflater.inflate(R.menu.menu_note_context, popupMenu.menu)
@@ -345,11 +510,23 @@ class MainActivity : AppCompatActivity() {
                 noteAdapter.setCategoryNameById(categories.associate { it.id to it.name })
             }
         }
-        
+
         lifecycleScope.launch {
             viewModel.selectedCategoryId.collect { selectedCategoryId ->
                 // 更新分类chips选中状态
                 createCategoryChips(viewModel.categories.value, selectedCategoryId)
+            }
+        }
+
+        lifecycleScope.launch {
+            viewModel.notebooks.collect { notebooks ->
+                createNotebookChips(notebooks, viewModel.selectedNotebookId.value)
+            }
+        }
+
+        lifecycleScope.launch {
+            viewModel.selectedNotebookId.collect { selectedNotebookId ->
+                createNotebookChips(viewModel.notebooks.value, selectedNotebookId)
             }
         }
         
@@ -632,19 +809,72 @@ class MainActivity : AppCompatActivity() {
             tempFile.outputStream().use { output ->
                 inputStream?.copyTo(output)
             }
-            
-            showImportPasswordDialog(tempFile)
+
+            // 新增一步：选择导入到哪个标签页
+            showImportTargetDialog(tempFile)
         } catch (e: Exception) {
             Toast.makeText(this, "读取文件失败：${e.message}", Toast.LENGTH_LONG).show()
         }
     }
-    
-    private fun showImportPasswordDialog(zipFile: File) {
+
+    /**
+     * 选择导入目标标签页：从已有标签页中选择，或新建一个标签页。
+     * 真正的新建标签页延迟到密码校验通过之后才发生（见 ViewModel.importNotes）。
+     */
+    private fun showImportTargetDialog(zipFile: File) {
+        val notebooks = viewModel.notebooks.value
+        val items = (notebooks.map { it.name } + "➕ 新建标签页…").toTypedArray()
+
+        AlertDialog.Builder(this)
+            .setTitle("导入到哪个标签页？")
+            .setItems(items) { _, which ->
+                if (which == notebooks.size) {
+                    // 新建标签页：先取名（不立即创建），密码通过后再创建
+                    promptNewNotebookNameForImport(zipFile)
+                } else {
+                    val target = notebooks[which]
+                    showImportPasswordDialog(zipFile, existingNotebookId = target.id, newNotebookName = null)
+                }
+            }
+            .setNegativeButton("取消") { _, _ ->
+                zipFile.delete()
+            }
+            .show()
+    }
+
+    private fun promptNewNotebookNameForImport(zipFile: File) {
+        val editText = EditText(this).apply {
+            hint = "请输入新标签页名称"
+            inputType = android.text.InputType.TYPE_CLASS_TEXT
+        }
+
+        AlertDialog.Builder(this)
+            .setTitle("新建标签页")
+            .setView(editText)
+            .setPositiveButton("下一步") { _, _ ->
+                val name = editText.text.toString().trim()
+                if (name.isEmpty()) {
+                    Toast.makeText(this, "名称不能为空", Toast.LENGTH_SHORT).show()
+                    return@setPositiveButton
+                }
+                showImportPasswordDialog(zipFile, existingNotebookId = null, newNotebookName = name)
+            }
+            .setNegativeButton("取消") { _, _ ->
+                zipFile.delete()
+            }
+            .show()
+    }
+
+    private fun showImportPasswordDialog(
+        zipFile: File,
+        existingNotebookId: String?,
+        newNotebookName: String?
+    ) {
         val editText = EditText(this).apply {
             hint = "请输入导入密码"
             inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
         }
-        
+
         AlertDialog.Builder(this)
             .setTitle("导入记事")
             .setMessage("请输入文件的解密密码")
@@ -652,7 +882,7 @@ class MainActivity : AppCompatActivity() {
             .setPositiveButton("导入") { _, _ ->
                 val password = editText.text.toString()
                 if (password.isNotEmpty()) {
-                    showImportModeDialog(zipFile, password)
+                    performImport(zipFile, password, existingNotebookId, newNotebookName)
                 } else {
                     Toast.makeText(this, "密码不能为空", Toast.LENGTH_SHORT).show()
                 }
@@ -662,37 +892,31 @@ class MainActivity : AppCompatActivity() {
             }
             .show()
     }
-    
-    private fun showImportModeDialog(zipFile: File, password: String) {
-        AlertDialog.Builder(this)
-            .setTitle("导入模式")
-            .setMessage("请选择导入模式：\n\n覆盖导入：删除所有现有记事，导入新记事\n追加导入：保留现有记事，添加新记事")
-            .setPositiveButton("覆盖导入") { _, _ ->
-                performImport(zipFile, password, true)
-            }
-            .setNeutralButton("追加导入") { _, _ ->
-                performImport(zipFile, password, false)
-            }
-            .setNegativeButton("取消") { _, _ ->
-                zipFile.delete()
-            }
-            .show()
-    }
-    
-    private fun performImport(zipFile: File, password: String, overwrite: Boolean) {
+
+    private fun performImport(
+        zipFile: File,
+        password: String,
+        existingNotebookId: String?,
+        newNotebookName: String?
+    ) {
         lifecycleScope.launch {
             viewModel.importNotes(
                 zipFile = zipFile,
                 password = password,
-                overwrite = overwrite,
+                existingNotebookId = existingNotebookId,
+                newNotebookName = newNotebookName,
                 onProgress = { progress ->
                     runOnUiThread {
                         Toast.makeText(this@MainActivity, progress, Toast.LENGTH_SHORT).show()
                     }
                 },
-                onSuccess = { count ->
+                onSuccess = { summary, _ ->
                     runOnUiThread {
-                        Toast.makeText(this@MainActivity, "成功导入 $count 条记事", Toast.LENGTH_LONG).show()
+                        Toast.makeText(
+                            this@MainActivity,
+                            "导入完成：新增 ${summary.added} 条 / 更新 ${summary.updated} 条 / 跳过 ${summary.skipped} 条",
+                            Toast.LENGTH_LONG
+                        ).show()
                         zipFile.delete()
                     }
                 },
