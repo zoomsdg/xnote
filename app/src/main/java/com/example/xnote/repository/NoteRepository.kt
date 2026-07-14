@@ -3,6 +3,7 @@ package com.example.xnote.repository
 import android.content.Context
 import com.example.xnote.data.*
 import com.example.xnote.security.MediaCryptor
+import com.example.xnote.utils.AttachmentUtils
 import com.example.xnote.utils.ExportImportUtils
 import com.example.xnote.utils.FileUtils
 import com.example.xnote.utils.SecurityLog
@@ -493,6 +494,46 @@ class NoteRepository(val context: Context) {
                         createdAt = importNote.createdAt,
                         updatedAt = importNote.updatedAt
                     )
+                }
+                BlockType.FILE -> {
+                    val originalName = importBlock.alt?.takeIf { it.isNotBlank() } ?: "attachment"
+                    // 附件加密落盘到应用私有目录（与图片/音频同一条加密路径）
+                    val saved = importBlock.mediaFile
+                        ?.takeIf { it.exists() }
+                        ?.let {
+                            runCatching { AttachmentUtils.importAttachment(context, it, originalName) }
+                                .onFailure { e ->
+                                    SecurityLog.e("NoteRepository", "Failed to store imported attachment", e)
+                                }
+                                .getOrNull()
+                        }
+
+                    if (saved != null) {
+                        NoteBlock(
+                            id = UUID.randomUUID().toString(),
+                            noteId = noteId,
+                            type = BlockType.FILE,
+                            order = importBlock.order,
+                            // 兜底文本与导出契约一致：老客户端/降级时仍能看懂这里挂了什么
+                            text = "[附件] $originalName",
+                            url = saved.path,
+                            alt = saved.name,
+                            size = saved.size,
+                            createdAt = importNote.createdAt,
+                            updatedAt = importNote.updatedAt
+                        )
+                    } else {
+                        // 落盘失败（例如超出加解密上限）→ 退化成文本块，不留空壳、不崩溃
+                        NoteBlock(
+                            id = UUID.randomUUID().toString(),
+                            noteId = noteId,
+                            type = BlockType.TEXT,
+                            order = importBlock.order,
+                            text = "[附件丢失] $originalName",
+                            createdAt = importNote.createdAt,
+                            updatedAt = importNote.updatedAt
+                        )
+                    }
                 }
             }
             blocks.add(block)

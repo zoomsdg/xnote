@@ -17,6 +17,7 @@ import androidx.appcompat.widget.AppCompatEditText
 import com.example.xnote.data.BlockType
 import com.example.xnote.data.NoteBlock
 import com.example.xnote.security.MediaCryptor
+import com.example.xnote.utils.AttachmentUtils
 import com.example.xnote.utils.SecurityLog
 import java.io.File
 import java.util.*
@@ -121,9 +122,12 @@ class RichEditText @JvmOverloads constructor(
                 BlockType.AUDIO -> {
                     insertAudioPlaceholder(builder, block)
                 }
+                BlockType.FILE -> {
+                    insertFilePlaceholder(builder, block)
+                }
             }
         }
-        
+
         setText(builder)
     }
     
@@ -211,6 +215,65 @@ class RichEditText @JvmOverloads constructor(
         notifyContentChanged()
     }
     
+    /**
+     * 在光标位置插入附件
+     */
+    fun insertFile(block: NoteBlock) {
+        val start = selectionStart.coerceIn(0, text?.length ?: 0)
+        val builder = SpannableStringBuilder(text)
+
+        insertFilePlaceholder(builder, block, start)
+        setText(builder)
+        setSelection(start + 1)
+
+        notifyContentChanged()
+    }
+
+    /**
+     * 把某个块与相邻块交换位置（上移 / 下移）。返回是否真的移动了。
+     */
+    fun moveBlock(blockId: String, delta: Int): Boolean {
+        val blocks = toBlocks().toMutableList()
+        val index = blocks.indexOfFirst { it.id == blockId }
+        if (index < 0) return false
+
+        val target = index + delta
+        if (target !in blocks.indices) return false
+
+        val tmp = blocks[index]
+        blocks[index] = blocks[target]
+        blocks[target] = tmp
+
+        loadFromBlocks(blocks.mapIndexed { i, block -> block.copy(order = i) })
+        notifyContentChanged()
+        return true
+    }
+
+    /**
+     * 删除某个块（附件/图片/音频）。
+     */
+    fun removeBlock(blockId: String): Boolean {
+        val blocks = toBlocks()
+        if (blocks.none { it.id == blockId }) return false
+
+        val remaining = blocks
+            .filter { it.id != blockId }
+            .mapIndexed { i, block -> block.copy(order = i) }
+
+        blockMap.remove(blockId)
+        loadFromBlocks(remaining)
+        notifyContentChanged()
+        return true
+    }
+
+    private fun insertFilePlaceholder(builder: SpannableStringBuilder, block: NoteBlock, position: Int = builder.length) {
+        val span = FileMediaSpan(context, block)
+        blockMap[block.id] = block
+
+        builder.insert(position, OBJ_REPLACEMENT_CHAR.toString())
+        builder.setSpan(span, position, position + 1, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+    }
+
     private fun insertImagePlaceholder(builder: SpannableStringBuilder, block: NoteBlock, position: Int = builder.length) {
         val span = ImageMediaSpan(context, block)
         blockMap[block.id] = block
@@ -510,6 +573,99 @@ class ImageMediaSpan(
         canvas.drawRect(0f, 0f, displayWidth.toFloat(), displayHeight.toFloat(), borderPaint)
         
         canvas.restore()
+    }
+}
+
+/**
+ * 附件占位符：只显示「有这么个文档」——图标 + 原始文件名 + 大小。
+ * 不解析、不预览附件内容。点击由 Activity 弹出「打开 / 另存为 / 上移 / 下移 / 删除」。
+ */
+class FileMediaSpan(
+    private val context: Context,
+    block: NoteBlock
+) : MediaSpan(block) {
+
+    private val density = context.resources.displayMetrics.density
+
+    private val paint = Paint().apply { isAntiAlias = true }
+
+    private val boxWidth = (280 * density).toInt()
+    private val boxHeight = (56 * density).toInt()
+
+    override fun getDisplaySize(): Pair<Int, Int> = Pair(boxWidth, boxHeight)
+
+    override fun draw(
+        canvas: Canvas,
+        text: CharSequence?,
+        start: Int,
+        end: Int,
+        x: Float,
+        top: Int,
+        y: Int,
+        bottom: Int,
+        paint: Paint
+    ) {
+        canvas.save()
+        canvas.translate(x, top.toFloat())
+
+        val w = boxWidth.toFloat()
+        val h = boxHeight.toFloat()
+        val radius = 8 * density
+
+        // 背景 + 边框
+        this.paint.style = Paint.Style.FILL
+        this.paint.color = Color.parseColor("#F1F3F4")
+        canvas.drawRoundRect(0f, 0f, w, h, radius, radius, this.paint)
+
+        this.paint.style = Paint.Style.STROKE
+        this.paint.strokeWidth = 1 * density
+        this.paint.color = Color.parseColor("#DADCE0")
+        canvas.drawRoundRect(0f, 0f, w, h, radius, radius, this.paint)
+
+        // 回形针图标
+        this.paint.style = Paint.Style.FILL
+        this.paint.color = Color.parseColor("#5F6368")
+        this.paint.textSize = 18 * density
+        canvas.drawText("📎", 10 * density, h / 2 + 6 * density, this.paint)
+
+        val textLeft = 40 * density
+        val textRight = w - 10 * density
+
+        // 原始文件名（放不下则省略中间，保住扩展名）
+        this.paint.color = Color.parseColor("#202124")
+        this.paint.textSize = 14 * density
+        val name = block.alt ?: "附件"
+        canvas.drawText(
+            ellipsize(name, textRight - textLeft, this.paint),
+            textLeft,
+            h / 2 - 2 * density,
+            this.paint
+        )
+
+        // 大小
+        val sizeText = AttachmentUtils.formatSize(block.size)
+        if (sizeText.isNotEmpty()) {
+            this.paint.color = Color.parseColor("#5F6368")
+            this.paint.textSize = 11 * density
+            canvas.drawText(sizeText, textLeft, h / 2 + 14 * density, this.paint)
+        }
+
+        canvas.restore()
+    }
+
+    /** 名字过长时省略中间部分，保留扩展名（"很长的报表名….csv"） */
+    private fun ellipsize(name: String, maxWidth: Float, paint: Paint): String {
+        if (paint.measureText(name) <= maxWidth) return name
+
+        val ext = name.substringAfterLast('.', "")
+        val suffix = if (ext.isNotEmpty() && ext.length <= 8) ".$ext" else ""
+        val stem = if (suffix.isEmpty()) name else name.dropLast(suffix.length)
+
+        var head = stem
+        while (head.isNotEmpty() && paint.measureText("$head…$suffix") > maxWidth) {
+            head = head.dropLast(1)
+        }
+        return "$head…$suffix"
     }
 }
 

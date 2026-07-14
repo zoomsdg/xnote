@@ -15,7 +15,7 @@ import net.sqlcipher.database.SupportFactory
  */
 @Database(
     entities = [Note::class, NoteBlock::class, Category::class, Notebook::class],
-    version = 4,
+    version = 5,
     exportSchema = false
 )
 @TypeConverters(Converters::class)
@@ -83,6 +83,13 @@ abstract class NoteDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                // 附件块的字节数（明文原始大小），仅供显示；纯本地字段，不进导出 ZIP
+                database.execSQL("ALTER TABLE note_blocks ADD COLUMN size INTEGER")
+            }
+        }
+
         fun getDatabase(context: Context): NoteDatabase {
             return INSTANCE ?: synchronized(this) {
                 val appCtx = context.applicationContext
@@ -96,7 +103,7 @@ abstract class NoteDatabase : RoomDatabase() {
                     // clearPassphrase=false: 让 SupportFactory 保留 passphrase 字节，
                     // 以防 Room 在生命周期内需要重建 SupportHelper 时取不到密钥
                     .openHelperFactory(SupportFactory(passphrase, null, false))
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
                     .build()
                 INSTANCE = instance
                 instance

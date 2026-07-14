@@ -2,6 +2,7 @@ package com.example.xnote
 
 import android.Manifest
 import android.app.Activity
+import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -28,13 +29,16 @@ import com.example.xnote.data.FullNote
 import com.example.xnote.data.NoteBlock
 import com.example.xnote.databinding.ActivityNoteEditBinding
 import com.example.xnote.repository.NoteRepository
+import com.example.xnote.utils.AttachmentUtils
 import com.example.xnote.utils.FileUtils
 import com.example.xnote.utils.ImageUtils
 import com.example.xnote.utils.PermissionUtils
 import com.example.xnote.utils.SecurityLog
 import com.example.xnote.viewmodel.NoteEditViewModel
 import com.example.xnote.viewmodel.NoteEditViewModelFactory
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -82,7 +86,25 @@ class NoteEditActivity : AppCompatActivity() {
     private val pickAudioLauncher = registerForActivityResult(
         ActivityResultContracts.GetContent()
     ) { uri -> uri?.let { handleAudioSelected(it) } }
-    
+
+    /** 挂附件：任意格式，交给 SAF 选文件 */
+    private val pickFileLauncher = registerForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri -> uri?.let { handleFileSelected(it) } }
+
+    /** "另存为"目标位置选好后，把待保存的附件写过去 */
+    private var pendingSaveAsBlock: NoteBlock? = null
+
+    private val saveAsLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        val block = pendingSaveAsBlock
+        pendingSaveAsBlock = null
+        if (result.resultCode == Activity.RESULT_OK && block != null) {
+            result.data?.data?.let { dest -> writeAttachmentTo(block, dest) }
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivityNoteEditBinding.inflate(layoutInflater)
@@ -150,6 +172,11 @@ class NoteEditActivity : AppCompatActivity() {
             }
         }
         
+        binding.btnAddFile.setOnClickListener {
+            // 任意格式：不限定 MIME，让用户自己挑
+            pickFileLauncher.launch(arrayOf("*/*"))
+        }
+
         binding.btnStopRecording.setOnClickListener {
             stopRecording()
         }
@@ -332,7 +359,8 @@ class NoteEditActivity : AppCompatActivity() {
                 current.alt != initial.alt ||
                 current.duration != initial.duration ||
                 current.width != initial.width ||
-                current.height != initial.height) {
+                current.height != initial.height ||
+                current.size != initial.size) {
                 SecurityLog.d("NoteEditActivity", "Block content changed")
                 return true
             }
@@ -358,8 +386,8 @@ class NoteEditActivity : AppCompatActivity() {
                         return false
                     }
                 }
-                BlockType.IMAGE, BlockType.AUDIO -> {
-                    // 有媒体文件就认为有内容
+                BlockType.IMAGE, BlockType.AUDIO, BlockType.FILE -> {
+                    // 有媒体/附件就认为有内容
                     return false
                 }
             }
@@ -492,6 +520,136 @@ class NoteEditActivity : AppCompatActivity() {
         }
     }
     
+    /**
+     * 挂入本机任意格式的文件。不解析内容，只加密落盘并作为一个附件块插入。
+     */
+    private fun handleFileSelected(uri: Uri) {
+        lifecycleScope.launch {
+            // 附件可达 50MB，加密落盘必须离开主线程
+            val result = withContext(Dispatchers.IO) {
+                AttachmentUtils.saveAttachmentToPrivateStorage(this@NoteEditActivity, uri)
+            }
+
+            when (result) {
+                is AttachmentUtils.PickResult.Ok -> {
+                    val block = NoteBlock(
+                        id = UUID.randomUUID().toString(),
+                        noteId = noteId,
+                        type = BlockType.FILE,
+                        order = 0,
+                        // 兜底文本与导出契约一致
+                        text = "[附件] ${result.attachment.name}",
+                        url = result.attachment.path,
+                        alt = result.attachment.name,
+                        size = result.attachment.size
+                    )
+                    binding.richEditText.insertFile(block)
+                }
+                is AttachmentUtils.PickResult.TooLarge -> {
+                    val limit = AttachmentUtils.formatSize(AttachmentUtils.MAX_ATTACHMENT_SIZE)
+                    Toast.makeText(
+                        this@NoteEditActivity,
+                        "附件过大（${AttachmentUtils.formatSize(result.size)}），单个附件不能超过 $limit",
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+                is AttachmentUtils.PickResult.Failed -> {
+                    Toast.makeText(this@NoteEditActivity, result.message, Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    }
+
+    /**
+     * 附件块的操作菜单：打开 / 另存为 / 上移 / 下移 / 删除。
+     */
+    private fun showAttachmentOptions(block: NoteBlock) {
+        val options = arrayOf("打开", "另存为", "上移", "下移", "删除")
+
+        AlertDialog.Builder(this)
+            .setTitle(block.alt ?: "附件")
+            .setItems(options) { _, which ->
+                when (which) {
+                    0 -> openAttachment(block)
+                    1 -> saveAttachmentAs(block)
+                    2 -> if (!binding.richEditText.moveBlock(block.id, -1)) {
+                        Toast.makeText(this, "已经在最前面了", Toast.LENGTH_SHORT).show()
+                    }
+                    3 -> if (!binding.richEditText.moveBlock(block.id, 1)) {
+                        Toast.makeText(this, "已经在最后面了", Toast.LENGTH_SHORT).show()
+                    }
+                    4 -> confirmDeleteAttachment(block)
+                }
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    private fun confirmDeleteAttachment(block: NoteBlock) {
+        AlertDialog.Builder(this)
+            .setTitle("删除附件")
+            .setMessage("确定从这条纪事移除「${block.alt ?: "附件"}」吗？")
+            .setPositiveButton("删除") { _, _ ->
+                binding.richEditText.removeBlock(block.id)
+                // 本地加密文件随之清理，避免留下孤儿文件
+                block.url?.let { FileUtils.deleteFile(it) }
+                hasContentChanged = true
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    /**
+     * 打开：解密到 cache 的独立子目录（保留原文件名），再用 FileProvider 交给系统里已装的程序。
+     */
+    private fun openAttachment(block: NoteBlock) {
+        lifecycleScope.launch {
+            val uri = withContext(Dispatchers.IO) {
+                runCatching {
+                    AttachmentUtils.decryptToOpenCache(this@NoteEditActivity, block)
+                }.onFailure {
+                    SecurityLog.e("NoteEditActivity", "Failed to decrypt attachment", it)
+                }.getOrNull()
+            }
+
+            if (uri == null) {
+                Toast.makeText(this@NoteEditActivity, "附件文件不存在或已损坏", Toast.LENGTH_SHORT).show()
+                return@launch
+            }
+
+            try {
+                startActivity(AttachmentUtils.viewIntentFor(uri, block.alt))
+            } catch (e: ActivityNotFoundException) {
+                // 没有能处理这种格式的程序：友好提示，不崩溃
+                Toast.makeText(
+                    this@NoteEditActivity,
+                    "没有找到能打开「${block.alt ?: "该附件"}」的程序，可先「另存为」再用其他应用打开",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+        }
+    }
+
+    private fun saveAttachmentAs(block: NoteBlock) {
+        pendingSaveAsBlock = block
+        try {
+            saveAsLauncher.launch(AttachmentUtils.createDocumentIntent(block.alt))
+        } catch (e: ActivityNotFoundException) {
+            pendingSaveAsBlock = null
+            Toast.makeText(this, "系统没有可用的文件管理器", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun writeAttachmentTo(block: NoteBlock, dest: Uri) {
+        lifecycleScope.launch {
+            val ok = withContext(Dispatchers.IO) {
+                AttachmentUtils.exportAttachmentTo(this@NoteEditActivity, block, dest)
+            }
+            val msg = if (ok) "已保存「${block.alt ?: "附件"}」" else "保存失败"
+            Toast.makeText(this@NoteEditActivity, msg, Toast.LENGTH_SHORT).show()
+        }
+    }
+
     private fun startRecording() {
         if (PermissionUtils.hasAudioPermission(this)) {
             val filePath = audioRecorder.startRecording()
@@ -614,6 +772,10 @@ class NoteEditActivity : AppCompatActivity() {
                 block.url?.let { imagePath ->
                     showImageViewer(imagePath)
                 }
+            }
+            BlockType.FILE -> {
+                updateDebugStatus("附件: ${block.alt}")
+                showAttachmentOptions(block)
             }
             else -> {
                 updateDebugStatus("未知媒体类型: ${block.type}")
