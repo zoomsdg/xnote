@@ -129,6 +129,33 @@ class ExportImportUtils(private val context: Context) {
                                 ExportBlock(type = "text", order = block.order, text = "[音频文件丢失]")
                             }
                         }
+                        BlockType.FILE -> {
+                            // 附件：解密落到导出临时目录（ZIP 内必须是明文原文件）
+                            val originalFile = File(block.url ?: "")
+                            val originalName = block.alt?.takeIf { it.isNotBlank() } ?: "attachment"
+                            if (originalFile.exists()) {
+                                // 附件可为任意格式、任意大小（本机挂入时已卡 50MB），此处不再套用媒体的大小校验
+                                val fileName =
+                                    "file_${UUID.randomUUID()}${AttachmentUtils.extensionSuffix(originalName)}"
+                                val targetFile = SecureFileValidator.createSecureExtractPath(mediaDir, fileName)
+                                targetFile.writeBytes(MediaCryptor.readAll(originalFile))
+
+                                ExportBlock(
+                                    type = "file",
+                                    order = block.order,
+                                    // 兜底：不认识 "file" 的老客户端会把它当文本块显示，不能省
+                                    text = "[附件] $originalName",
+                                    mediaFileName = fileName,
+                                    alt = originalName
+                                )
+                            } else {
+                                ExportBlock(
+                                    type = "text",
+                                    order = block.order,
+                                    text = "[附件丢失] $originalName"
+                                )
+                            }
+                        }
                     }
                     exportBlocks.add(exportBlock)
                 }
@@ -354,12 +381,43 @@ class ExportImportUtils(private val context: Context) {
                                 duration = exportBlock.duration
                             )
                         }
+                        "file" -> {
+                            // 原始文件名在 alt；alt 缺失时退而用 ZIP 内的名字，保证有东西可显示
+                            val originalName = exportBlock.alt?.takeIf { it.isNotBlank() }
+                                ?: exportBlock.mediaFileName?.takeIf { it.isNotBlank() }
+                                ?: "attachment"
+
+                            // 附件不套用媒体的大小校验：导入既有附件时不卡 50MB 上限，宁可收下也不丢数据
+                            val mediaFile = exportBlock.mediaFileName
+                                ?.takeIf { it.isNotBlank() }
+                                ?.let { SecureFileValidator.createSecureExtractPath(mediaDir, it) }
+                                ?.takeIf { it.exists() }
+
+                            if (mediaFile != null) {
+                                ImportBlock(
+                                    type = BlockType.FILE,
+                                    order = exportBlock.order,
+                                    mediaFile = mediaFile,
+                                    alt = originalName
+                                )
+                            } else {
+                                // media/ 里找不到实体 → 退化成文本块，不留空壳
+                                SecurityLog.w("ExportImportUtils", "Attachment missing in media/")
+                                ImportBlock(
+                                    type = BlockType.TEXT,
+                                    order = exportBlock.order,
+                                    text = "[附件丢失] $originalName"
+                                )
+                            }
+                        }
                         else -> {
+                            // 未知 type 一律回落文本块，绝不抛异常。
+                            // 优先用块自带的兜底文本（新版本写入的 text 字段就是给老客户端看的）
                             SecurityLog.w("ExportImportUtils", "Unknown block type: ${exportBlock.type}")
                             ImportBlock(
                                 type = BlockType.TEXT,
                                 order = exportBlock.order,
-                                text = "[未知类型的内容]"
+                                text = exportBlock.text?.take(10000) ?: "[未知类型的内容]"
                             )
                         }
                     }

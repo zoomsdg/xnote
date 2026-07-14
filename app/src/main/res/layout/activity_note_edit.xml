@@ -159,6 +159,16 @@
             android:contentDescription="@string/add_audio"
             android:scaleType="centerInside" />
 
+        <ImageButton
+            android:id="@+id/btnAddFile"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:layout_margin="4dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:src="@android:drawable/ic_menu_upload"
+            android:contentDescription="@string/add_attachment"
+            android:scaleType="centerInside" />
+
         <View
             android:layout_width="0dp"
             android:layout_height="1dp"

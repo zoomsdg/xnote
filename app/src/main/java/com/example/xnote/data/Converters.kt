@@ -12,8 +12,11 @@ class Converters {
         return blockType.name
     }
     
+    /**
+     * 未知取值（例如被更高版本写入、又降级回来的库）一律回落文本块，绝不抛异常。
+     */
     @TypeConverter
     fun toBlockType(blockType: String): BlockType {
-        return BlockType.valueOf(blockType)
+        return runCatching { BlockType.valueOf(blockType) }.getOrDefault(BlockType.TEXT)
     }
 }

@@ -5,6 +5,7 @@ import com.example.xnote.config.AppSecurityConfig
 import com.example.xnote.security.LegacyDataMigrator
 import com.example.xnote.security.MasterKeyManager
 import com.example.xnote.security.MediaCryptor
+import com.example.xnote.utils.AttachmentUtils
 import com.example.xnote.utils.SecurityLog
 import net.sqlcipher.database.SQLiteDatabase
 
@@ -25,6 +26,9 @@ class XNoteApplication : Application() {
 
         // 清掉上次进程遗留的解密临时文件（崩溃/被杀时可能残留）
         MediaCryptor.cleanupDecryptedTempDir(this)
+
+        // 清掉上次"打开附件"时解密到 cache 的明文附件
+        AttachmentUtils.cleanupOpenCache(this)
 
         // 配置存储（已有）
         runCatching { AppSecurityConfig.initialize(this) }

@@ -25,6 +25,7 @@ interface NoteDao {
         COALESCE(GROUP_CONCAT(CASE WHEN b.type = 'TEXT' THEN b.text ELSE '' END, ' '), '') as preview,
         n.updatedAt as lastModified,
         COUNT(b.id) as blockCount,
+        COALESCE(SUM(CASE WHEN b.type = 'FILE' THEN 1 ELSE 0 END), 0) as attachmentCount,
         n.categoryId as categoryId,
         n.isPinned as isPinned
         FROM notes n
@@ -41,6 +42,7 @@ interface NoteDao {
         COALESCE(GROUP_CONCAT(CASE WHEN b.type = 'TEXT' THEN b.text ELSE '' END, ' '), '') as preview,
         n.updatedAt as lastModified,
         COUNT(b.id) as blockCount,
+        COALESCE(SUM(CASE WHEN b.type = 'FILE' THEN 1 ELSE 0 END), 0) as attachmentCount,
         n.categoryId as categoryId,
         n.isPinned as isPinned
         FROM notes n
@@ -59,6 +61,7 @@ interface NoteDao {
         COALESCE(GROUP_CONCAT(CASE WHEN b.type = 'TEXT' THEN b.text ELSE '' END, ' '), '') as preview,
         n.updatedAt as lastModified,
         COUNT(b.id) as blockCount,
+        COALESCE(SUM(CASE WHEN b.type = 'FILE' THEN 1 ELSE 0 END), 0) as attachmentCount,
         n.categoryId as categoryId,
         n.isPinned as isPinned
         FROM notes n
@@ -82,6 +85,7 @@ interface NoteDao {
         COALESCE(GROUP_CONCAT(CASE WHEN b.type = 'TEXT' THEN b.text ELSE '' END, ' '), '') as preview,
         n.updatedAt as lastModified,
         COUNT(b.id) as blockCount,
+        COALESCE(SUM(CASE WHEN b.type = 'FILE' THEN 1 ELSE 0 END), 0) as attachmentCount,
         n.categoryId as categoryId,
         n.isPinned as isPinned
         FROM notes n
@@ -105,6 +109,7 @@ interface NoteDao {
         COALESCE(GROUP_CONCAT(CASE WHEN b.type = 'TEXT' THEN b.text ELSE '' END, ' '), '') as preview,
         n.updatedAt as lastModified,
         COUNT(b.id) as blockCount,
+        COALESCE(SUM(CASE WHEN b.type = 'FILE' THEN 1 ELSE 0 END), 0) as attachmentCount,
         n.categoryId as categoryId,
         n.isPinned as isPinned
         FROM notes n
@@ -122,6 +127,7 @@ interface NoteDao {
         COALESCE(GROUP_CONCAT(CASE WHEN b.type = 'TEXT' THEN b.text ELSE '' END, ' '), '') as preview,
         n.updatedAt as lastModified,
         COUNT(b.id) as blockCount,
+        COALESCE(SUM(CASE WHEN b.type = 'FILE' THEN 1 ELSE 0 END), 0) as attachmentCount,
         n.categoryId as categoryId,
         n.isPinned as isPinned
         FROM notes n
@@ -141,6 +147,7 @@ interface NoteDao {
         COALESCE(GROUP_CONCAT(CASE WHEN b.type = 'TEXT' THEN b.text ELSE '' END, ' '), '') as preview,
         n.updatedAt as lastModified,
         COUNT(b.id) as blockCount,
+        COALESCE(SUM(CASE WHEN b.type = 'FILE' THEN 1 ELSE 0 END), 0) as attachmentCount,
         n.categoryId as categoryId,
         n.isPinned as isPinned
         FROM notes n
@@ -158,6 +165,7 @@ interface NoteDao {
         COALESCE(GROUP_CONCAT(CASE WHEN b.type = 'TEXT' THEN b.text ELSE '' END, ' '), '') as preview,
         n.updatedAt as lastModified,
         COUNT(b.id) as blockCount,
+        COALESCE(SUM(CASE WHEN b.type = 'FILE' THEN 1 ELSE 0 END), 0) as attachmentCount,
         n.categoryId as categoryId,
         n.isPinned as isPinned
         FROM notes n
@@ -178,6 +186,7 @@ interface NoteDao {
         COALESCE(GROUP_CONCAT(CASE WHEN b.type = 'TEXT' THEN b.text ELSE '' END, ' '), '') as preview,
         n.updatedAt as lastModified,
         COUNT(b.id) as blockCount,
+        COALESCE(SUM(CASE WHEN b.type = 'FILE' THEN 1 ELSE 0 END), 0) as attachmentCount,
         n.categoryId as categoryId,
         n.isPinned as isPinned
         FROM notes n
@@ -200,6 +209,7 @@ interface NoteDao {
         COALESCE(GROUP_CONCAT(CASE WHEN b.type = 'TEXT' THEN b.text ELSE '' END, ' '), '') as preview,
         n.updatedAt as lastModified,
         COUNT(b.id) as blockCount,
+        COALESCE(SUM(CASE WHEN b.type = 'FILE' THEN 1 ELSE 0 END), 0) as attachmentCount,
         n.categoryId as categoryId,
         n.isPinned as isPinned
         FROM notes n

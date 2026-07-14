@@ -69,6 +69,16 @@
                 android:textColor="@color/secondary_text"
                 tools:text="2024-08-31 20:12" />
 
+            <TextView
+                android:id="@+id/tvAttachment"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="8dp"
+                android:textSize="12sp"
+                android:textColor="@color/secondary_text"
+                android:visibility="gone"
+                tools:text="📎2" />
+
             <ImageView
                 android:id="@+id/ivPin"
                 android:layout_width="16dp"

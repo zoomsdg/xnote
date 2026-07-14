@@ -53,5 +53,7 @@ data class NoteSummary(
     val lastModified: Long,
     val blockCount: Int,
     val categoryId: String = "daily",
-    val isPinned: Boolean = false
+    val isPinned: Boolean = false,
+    /** 该纪事挂载的附件数量，用于列表页 📎N 角标 */
+    val attachmentCount: Int = 0
 )

@@ -207,6 +207,14 @@ class NoteAdapter(
                     }
                 }
 
+                // 有附件的纪事显示 📎N 角标
+                if (noteSummary.attachmentCount > 0) {
+                    tvAttachment.text = "📎${noteSummary.attachmentCount}"
+                    tvAttachment.visibility = View.VISIBLE
+                } else {
+                    tvAttachment.visibility = View.GONE
+                }
+
                 ivPin.visibility = if (noteSummary.isPinned) View.VISIBLE else View.GONE
 
                 tvDate.text = dateFormat.format(Date(noteSummary.lastModified))

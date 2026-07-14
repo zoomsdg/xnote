@@ -10,6 +10,7 @@
     <string name="confirm_delete_message">确定要删除这篇记事吗？</string>
     <string name="add_image">插入图片</string>
     <string name="add_audio">插入音频</string>
+    <string name="add_attachment">挂入附件</string>
     <string name="record_audio">录音</string>
     <string name="play_audio">播放</string>
     <string name="pause_audio">暂停</string>
