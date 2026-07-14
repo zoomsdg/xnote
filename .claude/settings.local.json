@@ -1,0 +1,39 @@
+{
+//  "model": "claude-sonnet-4",
+ // "systemPrompt": "You are a senior developer working on this project",
+  // "allowedTools": [
+  //   "Edit",
+  //   "View"//,
+  //   // "Bash(git:)",
+  //   // "Bash(npm:*)"
+  // ],
+  
+  // "permissions": {
+  //   "allow": [
+  //     "Bash(*)",
+  //     "Read(*)",
+  //     "Write(*)"
+  //   ]
+  // },
+ "permissions": {
+      "allow": [
+      "Bash(*)",
+      "Read(*)",
+      "Write(*)"
+    ]//,
+
+    // "deny": [
+      // "Read(\"dist/**\")",
+      // "Read(\"build/**\")",
+      // "Read(\"out/**\")",
+      // "Read(\"tmp/**\")",
+      // "Read(\"coverage/**\")",
+      // "Read(\"*.log\")",
+      // "Read(\"*.tmp\")",
+      // "Read(\"*.swp\")",
+      // "Read(\".DS_Store\")",
+      // "Read(\"*.local\")",
+      // "Read(\"*.lock\"\n])"
+    // ]
+  }
+}
