@@ -77,14 +77,15 @@ class NoteEditActivity : AppCompatActivity() {
     private var recordingRunnable: Runnable? = null
     
     // Activity Result Launchers
-    /** 选图片：直接开 SAF 文档选择器，选完记下位置，下次从这里开始 */
+    /** 选图片：直接开 SAF 文档选择器，可多选；选完记下位置，下次从这里开始 */
     private val pickImageLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
         if (result.resultCode == Activity.RESULT_OK) {
-            result.data?.data?.let { uri ->
-                rememberLastImageLocation(uri)
-                handleImageSelected(uri)
+            val uris = extractPickedUris(result.data)
+            if (uris.isNotEmpty()) {
+                rememberLastImageLocation(uris.last())
+                handleImagesSelected(uris)
             }
         }
     }
@@ -427,7 +428,7 @@ class NoteEditActivity : AppCompatActivity() {
     }
     
     /**
-     * 直接打开本地图片选择器（不再询问拍照）。
+     * 直接打开本地图片选择器（不再询问拍照），支持一次选多张。
      * 若之前选过图，就把上次那张图的 URI 作为起始位置传进去，选择器会定位到它所在的目录。
      * 走 SAF，不需要存储权限。
      */
@@ -436,6 +437,7 @@ class NoteEditActivity : AppCompatActivity() {
             addCategory(Intent.CATEGORY_OPENABLE)
             type = "image/*"
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 lastImageLocation()?.let { putExtra(DocumentsContract.EXTRA_INITIAL_URI, it) }
             }
@@ -445,6 +447,16 @@ class NoteEditActivity : AppCompatActivity() {
         } catch (e: ActivityNotFoundException) {
             Toast.makeText(this, "未找到可用的图片选择器", Toast.LENGTH_SHORT).show()
         }
+    }
+
+    /** 多选时结果在 clipData 里，单选时还是 data。按选择顺序返回 */
+    private fun extractPickedUris(data: Intent?): List<Uri> {
+        if (data == null) return emptyList()
+        val clip = data.clipData
+        if (clip != null) {
+            return (0 until clip.itemCount).mapNotNull { clip.getItemAt(it)?.uri }
+        }
+        return data.data?.let { listOf(it) } ?: emptyList()
     }
 
     private fun lastImageLocation(): Uri? =
@@ -491,32 +503,51 @@ class NoteEditActivity : AppCompatActivity() {
         }
     }
     
-    private fun handleImageSelected(uri: Uri) {
+    /**
+     * 按选中顺序逐张落盘并插入。解码加密较重，放 IO 线程；
+     * 插入回主线程串行执行，光标依次后移，多张图的先后顺序才不会乱。
+     */
+    private fun handleImagesSelected(uris: List<Uri>) {
+        if (uris.isEmpty()) return
         lifecycleScope.launch {
-            try {
-                val filePath = FileUtils.saveImageToPrivateStorage(this@NoteEditActivity, uri)
-                if (filePath != null) {
-                    val (width, height) = FileUtils.getImageSize(filePath)
-                    val block = NoteBlock(
-                        id = UUID.randomUUID().toString(),
-                        noteId = noteId,
-                        type = BlockType.IMAGE,
-                        order = 0,
-                        url = filePath,
-                        alt = "图片",
-                        width = width,
-                        height = height
-                    )
+            if (uris.size > 1) {
+                Toast.makeText(this@NoteEditActivity, "正在添加 ${uris.size} 张图片…", Toast.LENGTH_SHORT).show()
+            }
+            var failed = 0
+            for (uri in uris) {
+                val block = withContext(Dispatchers.IO) {
+                    try {
+                        val filePath = FileUtils.saveImageToPrivateStorage(this@NoteEditActivity, uri)
+                            ?: return@withContext null
+                        val (width, height) = FileUtils.getImageSize(filePath)
+                        NoteBlock(
+                            id = UUID.randomUUID().toString(),
+                            noteId = noteId,
+                            type = BlockType.IMAGE,
+                            order = 0,
+                            url = filePath,
+                            alt = "图片",
+                            width = width,
+                            height = height
+                        )
+                    } catch (e: Exception) {
+                        SecurityLog.e("NoteEditActivity", "保存图片失败", e)
+                        null
+                    }
+                }
+                if (block != null) {
                     binding.richEditText.insertImage(block)
                 } else {
-                    Toast.makeText(this@NoteEditActivity, "图片保存失败", Toast.LENGTH_SHORT).show()
+                    failed++
                 }
-            } catch (e: Exception) {
-                Toast.makeText(this@NoteEditActivity, "处理图片失败", Toast.LENGTH_SHORT).show()
+            }
+            if (failed > 0) {
+                val msg = if (failed == uris.size) "图片添加失败" else "有 $failed 张图片添加失败"
+                Toast.makeText(this@NoteEditActivity, msg, Toast.LENGTH_SHORT).show()
             }
         }
     }
-    
+
     /**
      * 挂入本机任意格式的文件。不解析内容，只加密落盘并作为一个附件块插入。
      */
