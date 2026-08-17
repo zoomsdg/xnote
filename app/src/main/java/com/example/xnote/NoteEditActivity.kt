@@ -3,12 +3,15 @@ package com.example.xnote
 import android.Manifest
 import android.app.Activity
 import android.content.ActivityNotFoundException
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.provider.DocumentsContract
 import android.provider.MediaStore
 import android.text.TextWatcher
 import android.view.View
@@ -31,7 +34,6 @@ import com.example.xnote.databinding.ActivityNoteEditBinding
 import com.example.xnote.repository.NoteRepository
 import com.example.xnote.utils.AttachmentUtils
 import com.example.xnote.utils.FileUtils
-import com.example.xnote.utils.ImageUtils
 import com.example.xnote.utils.PermissionUtils
 import com.example.xnote.utils.SecurityLog
 import com.example.xnote.viewmodel.NoteEditViewModel
@@ -46,6 +48,10 @@ class NoteEditActivity : AppCompatActivity() {
     
     companion object {
         const val EXTRA_NOTE_ID = "note_id"
+
+        /** 记住选择器上次所在位置用的偏好文件 */
+        private const val PREFS_PICKER = "picker_prefs"
+        private const val KEY_LAST_IMAGE_URI = "last_image_uri"
     }
     
     private lateinit var binding: ActivityNoteEditBinding
@@ -71,18 +77,18 @@ class NoteEditActivity : AppCompatActivity() {
     private var recordingRunnable: Runnable? = null
     
     // Activity Result Launchers
+    /** 选图片：直接开 SAF 文档选择器，选完记下位置，下次从这里开始 */
     private val pickImageLauncher = registerForActivityResult(
-        ActivityResultContracts.GetContent()
-    ) { uri -> uri?.let { handleImageSelected(it) } }
-    
-    private val takePictureLauncher = registerForActivityResult(
-        ActivityResultContracts.TakePicture()
-    ) { success -> 
-        if (success) {
-            // Handle camera result
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            result.data?.data?.let { uri ->
+                rememberLastImageLocation(uri)
+                handleImageSelected(uri)
+            }
         }
     }
-    
+
     private val pickAudioLauncher = registerForActivityResult(
         ActivityResultContracts.GetContent()
     ) { uri -> uri?.let { handleAudioSelected(it) } }
@@ -161,7 +167,7 @@ class NoteEditActivity : AppCompatActivity() {
         }
         
         binding.btnAddImage.setOnClickListener {
-            showImageOptions()
+            selectImageFromGallery()
         }
         
         binding.btnAddAudio.setOnClickListener {
@@ -396,30 +402,6 @@ class NoteEditActivity : AppCompatActivity() {
         return true
     }
     
-    private fun showImageOptions() {
-        val options = arrayOf( "拍照", "本地相册")
-        val dialog = AlertDialog.Builder(this)
-            .setItems(options) { _, which ->
-                when (which) {
-                    1 -> selectImageFromGallery()
-                    0 -> takePhoto()
-                }
-            }
-            .create()
-        
-        dialog.setOnShowListener {
-            dialog.listView?.let { listView ->
-                for (i in 0 until listView.count) {
-                    val textView = listView.getChildAt(i) as? android.widget.TextView
-                    textView?.textSize = 18f
-                    textView?.setPadding(48, 32, 48, 32)
-                }
-            }
-        }
-        
-        dialog.show()
-    }
-    
     private fun showAudioOptions() {
         val options = arrayOf("录音", "本地音频")
         val dialog = AlertDialog.Builder(this)
@@ -444,24 +426,39 @@ class NoteEditActivity : AppCompatActivity() {
         dialog.show()
     }
     
+    /**
+     * 直接打开本地图片选择器（不再询问拍照）。
+     * 若之前选过图，就把上次那张图的 URI 作为起始位置传进去，选择器会定位到它所在的目录。
+     * 走 SAF，不需要存储权限。
+     */
     private fun selectImageFromGallery() {
-        if (PermissionUtils.hasStoragePermission(this)) {
-            pickImageLauncher.launch("image/*")
-        } else {
-            PermissionUtils.requestStoragePermission(this)
-        }
-    }
-    
-    private fun takePhoto() {
-        if (PermissionUtils.hasCameraPermission(this)) {
-            ImageUtils.createTempCameraFile(this)?.let { (_, uri) ->
-                takePictureLauncher.launch(uri)
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "image/*"
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                lastImageLocation()?.let { putExtra(DocumentsContract.EXTRA_INITIAL_URI, it) }
             }
-        } else {
-            PermissionUtils.requestCameraPermission(this)
+        }
+        try {
+            pickImageLauncher.launch(intent)
+        } catch (e: ActivityNotFoundException) {
+            Toast.makeText(this, "未找到可用的图片选择器", Toast.LENGTH_SHORT).show()
         }
     }
-    
+
+    private fun lastImageLocation(): Uri? =
+        getSharedPreferences(PREFS_PICKER, Context.MODE_PRIVATE)
+            .getString(KEY_LAST_IMAGE_URI, null)
+            ?.let { runCatching { Uri.parse(it) }.getOrNull() }
+
+    private fun rememberLastImageLocation(uri: Uri) {
+        getSharedPreferences(PREFS_PICKER, Context.MODE_PRIVATE)
+            .edit()
+            .putString(KEY_LAST_IMAGE_URI, uri.toString())
+            .apply()
+    }
+
     private fun selectAudioFromFiles() {
         if (PermissionUtils.hasStoragePermission(this)) {
             pickAudioLauncher.launch("audio/*")
@@ -827,18 +824,12 @@ class NoteEditActivity : AppCompatActivity() {
                     Toast.makeText(this, getString(R.string.audio_permission_required), Toast.LENGTH_SHORT).show()
                 }
             }
+            // 图片走 SAF 不再需要存储权限，这里只剩本地音频
             PermissionUtils.REQUEST_STORAGE_PERMISSION -> {
                 if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                    selectImageFromGallery()
+                    selectAudioFromFiles()
                 } else {
                     Toast.makeText(this, getString(R.string.storage_permission_required), Toast.LENGTH_SHORT).show()
-                }
-            }
-            PermissionUtils.REQUEST_CAMERA_PERMISSION -> {
-                if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                    takePhoto()
-                } else {
-                    Toast.makeText(this, getString(R.string.camera_permission_required), Toast.LENGTH_SHORT).show()
                 }
             }
         }
