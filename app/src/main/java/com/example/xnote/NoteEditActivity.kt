@@ -429,11 +429,13 @@ class NoteEditActivity : AppCompatActivity() {
     
     /**
      * 直接打开本地图片选择器（不再询问拍照），支持一次选多张。
+     * 用 ACTION_GET_CONTENT 而不是 ACTION_OPEN_DOCUMENT：后者只列系统 DocumentsProvider，
+     * 侧栏抽屉里会少掉「图库」这类由普通应用提供的路径入口。
      * 若之前选过图，就把上次那张图的 URI 作为起始位置传进去，选择器会定位到它所在的目录。
-     * 走 SAF，不需要存储权限。
+     * 不需要存储权限。
      */
     private fun selectImageFromGallery() {
-        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+        val intent = Intent(Intent.ACTION_GET_CONTENT).apply {
             addCategory(Intent.CATEGORY_OPENABLE)
             type = "image/*"
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
@@ -464,7 +466,13 @@ class NoteEditActivity : AppCompatActivity() {
             .getString(KEY_LAST_IMAGE_URI, null)
             ?.let { runCatching { Uri.parse(it) }.getOrNull() }
 
+    /**
+     * 只记文档选择器给的 URI。走图库应用选出来的 URI 不是文档 URI，
+     * 拿它当起始位置没用，记下来反而会把上次那个有效位置冲掉。
+     */
     private fun rememberLastImageLocation(uri: Uri) {
+        val isDocument = runCatching { DocumentsContract.isDocumentUri(this, uri) }.getOrDefault(false)
+        if (!isDocument) return
         getSharedPreferences(PREFS_PICKER, Context.MODE_PRIVATE)
             .edit()
             .putString(KEY_LAST_IMAGE_URI, uri.toString())
