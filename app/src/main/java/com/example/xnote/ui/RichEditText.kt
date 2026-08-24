@@ -182,16 +182,37 @@ class RichEditText @JvmOverloads constructor(
     }
     
     /**
-     * 在光标位置插入图片
+     * 在光标位置插入图片，并让它独占一行。
+     *
+     * 一次选多张时，上层是循环调用本方法逐张插入的。若不补换行，
+     * 几个占位符会紧挨着落在同一行里。这里在图片前后各补一个换行
+     * （已经是行首/行尾就不重复补），光标停在尾部换行之后，
+     * 于是下一张自然从新的一行开始。
+     *
+     * 换行是写进文本本身的，[toBlocks] 会把它当作 span 之间的普通文本
+     * 存成 TEXT 块，[loadFromBlocks] 再原样贴回，所以保存重开后版式不变。
      */
     fun insertImage(block: NoteBlock) {
-        val start = selectionStart
         val builder = SpannableStringBuilder(text)
-        
-        insertImagePlaceholder(builder, block, start)
+        val start = selectionStart.coerceIn(0, builder.length)
+
+        // 前面不是行首就补一个换行
+        val needLeading = start > 0 && builder[start - 1] != '\n'
+        if (needLeading) builder.insert(start, "\n")
+        val imagePos = if (needLeading) start + 1 else start
+
+        insertImagePlaceholder(builder, block, imagePos)
+
+        // 后面不是行尾也不是换行，就再补一个
+        val afterImage = imagePos + 1
+        if (afterImage >= builder.length || builder[afterImage] != '\n') {
+            builder.insert(afterImage, "\n")
+        }
+
         setText(builder)
-        setSelection(start + 1)
-        
+        // 停到尾部换行之后，下一张从新行开始
+        setSelection((afterImage + 1).coerceAtMost(builder.length))
+
         // 强制刷新显示
         post {
             invalidate()
