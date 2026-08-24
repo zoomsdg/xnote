@@ -590,18 +590,19 @@ class NoteEditActivity : AppCompatActivity() {
             for (uri in uris) {
                 val block = withContext(Dispatchers.IO) {
                     try {
-                        val filePath = FileUtils.saveImageToPrivateStorage(this@NoteEditActivity, uri)
+                        // 尺寸直接由落盘时那张 bitmap 带出，不再回读文件——
+                        // 原来的 getImageSize 会把刚写好的文件整个解密一遍，纯属白做
+                        val saved = FileUtils.saveImageToPrivateStorage(this@NoteEditActivity, uri)
                             ?: return@withContext null
-                        val (width, height) = FileUtils.getImageSize(filePath)
                         NoteBlock(
                             id = UUID.randomUUID().toString(),
                             noteId = noteId,
                             type = BlockType.IMAGE,
                             order = 0,
-                            url = filePath,
+                            url = saved.path,
                             alt = "图片",
-                            width = width,
-                            height = height
+                            width = saved.width,
+                            height = saved.height
                         )
                     } catch (t: Throwable) {
                         // 大图解码可能抛 OutOfMemoryError（Error 不是 Exception），必须一起兜住
