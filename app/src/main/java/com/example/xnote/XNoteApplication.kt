@@ -27,6 +27,10 @@ class XNoteApplication : Application() {
         // 清掉上次进程遗留的解密临时文件（崩溃/被杀时可能残留）
         MediaCryptor.cleanupDecryptedTempDir(this)
 
+        // 把存量 XNC1 容器升级成 XNC2（后台低优先级，一次性）。
+        // 旧格式整文件走 Keystore/StrongBox，几十 KB/s，不升级则打开旧纪事必卡。
+        MediaCryptor.upgradeLegacyContainersAsync(this)
+
         // 清掉上次"打开附件"时解密到 cache 的明文附件
         AttachmentUtils.cleanupOpenCache(this)
 

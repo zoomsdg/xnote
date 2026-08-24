@@ -1067,26 +1067,43 @@ class NoteEditActivity : AppCompatActivity() {
             val layoutImageInfo = dialog.findViewById<android.widget.LinearLayout>(R.id.layoutImageInfo)
             val tvImageSize = dialog.findViewById<android.widget.TextView>(R.id.tvImageSize)
             val tvImagePath = dialog.findViewById<android.widget.TextView>(R.id.tvImagePath)
+
+            // 先把对话框显示出来，图片随后异步填进去
+            dialog.show()
             
-            // 加载并显示图片（自动判别明文/XNC1 加密）
-            val bitmap = com.example.xnote.security.MediaCryptor.decodeBitmapFull(file)
-            if (bitmap != null) {
-                imageView.setImageBitmap(bitmap)
-                
-                // 显示图片信息
-                tvImageSize.text = "${bitmap.width} × ${bitmap.height}"
-                tvImagePath.text = file.name
-                layoutImageInfo.visibility = View.VISIBLE
-                
-                SecurityLog.d("ImageViewer", "Successfully loaded bitmap: ${bitmap.width}x${bitmap.height}")
-            } else {
-                // 图片加载失败，显示占位图
-                imageView.setImageResource(android.R.drawable.ic_menu_gallery)
-                tvImageSize.text = "无法加载"
-                tvImagePath.text = file.name
-                layoutImageInfo.visibility = View.VISIBLE
-                
-                SecurityLog.e("ImageViewer", "Failed to decode bitmap")
+            // 解密 + 解码一律放 IO 线程。旧格式 XNC1 要整文件过 StrongBox，
+            // 放主线程会直接卡到 ANR（表现为「点图后系统提示无响应」）。
+            // 同时按屏幕尺寸降采样，避免 decodeBitmapFull 在大图上 OOM。
+            tvImagePath.text = file.name
+            tvImageSize.text = "加载中…"
+            layoutImageInfo.visibility = View.VISIBLE
+
+            val metrics = resources.displayMetrics
+            lifecycleScope.launch {
+                val bitmap = withContext(Dispatchers.IO) {
+                    try {
+                        com.example.xnote.security.MediaCryptor.decodeBitmapSampled(
+                            file, metrics.widthPixels, metrics.heightPixels
+                        )
+                    } catch (t: Throwable) {
+                        // 含 OutOfMemoryError：原来的 catch (e: Exception) 接不住
+                        SecurityLog.e("ImageViewer", "Failed to decode bitmap", t)
+                        null
+                    }
+                }
+
+                if (!dialog.isShowing) {
+                    bitmap?.recycle()
+                    return@launch
+                }
+
+                if (bitmap != null) {
+                    imageView.setImageBitmap(bitmap)
+                    tvImageSize.text = "${bitmap.width} × ${bitmap.height}"
+                } else {
+                    imageView.setImageResource(android.R.drawable.ic_menu_gallery)
+                    tvImageSize.text = "无法加载"
+                }
             }
             
             // 关闭按钮
@@ -1105,12 +1122,9 @@ class NoteEditActivity : AppCompatActivity() {
                 dialog.dismiss()
             }
             
-            // 显示对话框
-            dialog.show()
-            
-        } catch (e: Exception) {
-            SecurityLog.e("ImageViewer", "Exception in showImageViewer", e)
-            Toast.makeText(this, "显示图片时出错: ${e.message}", Toast.LENGTH_SHORT).show()
+        } catch (t: Throwable) {
+            SecurityLog.e("ImageViewer", "Exception in showImageViewer", t)
+            Toast.makeText(this, "显示图片时出错", Toast.LENGTH_SHORT).show()
         }
     }
     

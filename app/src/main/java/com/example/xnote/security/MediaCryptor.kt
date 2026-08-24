@@ -10,48 +10,99 @@ import java.io.FileInputStream
 import java.io.IOException
 import java.io.InputStream
 import java.util.UUID
+import java.security.SecureRandom
 import javax.crypto.Cipher
 import javax.crypto.spec.GCMParameterSpec
+import javax.crypto.spec.SecretKeySpec
 
 /**
- * 媒体文件加解密。文件落盘格式：
+ * 媒体文件加解密。采用信封加密（envelope encryption）。
+ *
+ * 落盘格式（当前写入 XNC2）：
+ *   [magic 4B "XNC2"][wrapIv 12B][wrappedKey 48B][dataIv 12B][ciphertext + GCM tag]
+ *
+ * 仍兼容读取旧格式 XNC1：
  *   [magic 4B "XNC1"][iv 12B][ciphertext + GCM tag]
  *
- * 使用 [MasterKeyManager] 提供的 Keystore AES-256-GCM 主密钥。
- * 设备 root 也无法直接读出原始字节（即便 dump 出加密文件，没有 Keystore 也解不开）。
+ * 为什么要分两层：
+ * XNC1 把整个文件直接喂给 [MasterKeyManager] 的 Keystore 主密钥，而该密钥优先建在
+ * StrongBox（独立安全芯片）里——每个数据块都要经慢速总线送进那颗芯片运算，
+ * 实测吞吐只有几十 KB/s 量级。一张 500KB 的图要 5~8 秒，表现为「添加图片极慢」，
+ * 以及点开大图时主线程卡死触发 ANR。设备越新（带 StrongBox）越严重，
+ * 没有 StrongBox 的机器落回 TEE 反而快得多——这正是 Android 12 正常、
+ * Android 16 极慢的原因。
+ *
+ * XNC2 改为：每个文件随机生成一把 32 字节 AES-256 数据密钥，用软件 provider
+ * （Conscrypt，走 ARMv8 加密指令，GB/s 级）加解密文件本体；只把这 32 字节数据密钥
+ * 送进 Keystore 包装。StrongBox 处理 32 字节是瞬时的，安全性不变：
+ * 主密钥依旧不可导出，dump 出加密文件没有 Keystore 一样解不开。
  *
  * 单次 in-memory 加解密，文件大小受 [MAX_PLAINTEXT_SIZE] 限制；
  * 与现有 50MB ZIP 上限保持一致。
  */
 object MediaCryptor {
 
-    private val MAGIC = byteArrayOf(0x58, 0x4E, 0x43, 0x31) // "XNC1"
+    private val MAGIC_V1 = byteArrayOf(0x58, 0x4E, 0x43, 0x31) // "XNC1"
+    private val MAGIC_V2 = byteArrayOf(0x58, 0x4E, 0x43, 0x32) // "XNC2"
+    private const val MAGIC_SIZE = 4
     private const val IV_SIZE = 12
     private const val GCM_TAG_BITS = 128
+    private const val GCM_TAG_SIZE = 16
+    private const val DATA_KEY_SIZE = 32                        // AES-256
+    private const val WRAPPED_KEY_SIZE = DATA_KEY_SIZE + GCM_TAG_SIZE
     private const val MAX_PLAINTEXT_SIZE: Long = 64L * 1024 * 1024 // 64 MB
     private const val DECRYPT_TMP_DIR = "decrypt_tmp"
 
-    fun isEncryptedFile(file: File): Boolean {
-        if (!file.exists() || file.length() < (MAGIC.size + IV_SIZE).toLong()) return false
-        val header = ByteArray(MAGIC.size)
+    private const val TRANSFORMATION = "AES/GCM/NoPadding"
+
+    private val secureRandom by lazy { SecureRandom() }
+
+    /** 读文件头 4 字节；不是可识别的容器则返回 null */
+    private fun magicOf(file: File): ByteArray? {
+        if (!file.exists() || file.length() < (MAGIC_SIZE + IV_SIZE).toLong()) return null
+        val header = ByteArray(MAGIC_SIZE)
         return try {
-            FileInputStream(file).use { it.read(header) }
-            header.contentEquals(MAGIC)
+            val read = FileInputStream(file).use { it.read(header) }
+            if (read != MAGIC_SIZE) null else header
         } catch (_: IOException) {
-            false
+            null
         }
+    }
+
+    fun isEncryptedFile(file: File): Boolean {
+        val m = magicOf(file) ?: return false
+        return m.contentEquals(MAGIC_V2) || m.contentEquals(MAGIC_V1)
     }
 
     fun encryptBytes(plain: ByteArray, dest: File) {
         require(plain.size.toLong() <= MAX_PLAINTEXT_SIZE) { "Plaintext too large" }
-        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-        cipher.init(Cipher.ENCRYPT_MODE, MasterKeyManager.getOrCreateKey())
-        val iv = cipher.iv
-        val ct = cipher.doFinal(plain)
+
+        // 1) 本文件专属的随机数据密钥，纯软件生成，不进 Keystore
+        val dataKeyBytes = ByteArray(DATA_KEY_SIZE).also { secureRandom.nextBytes(it) }
+
+        // 2) 用软件 provider 加密文件本体（SecretKeySpec 会走 Conscrypt，硬件加速）
+        val dataCipher = Cipher.getInstance(TRANSFORMATION)
+        dataCipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(dataKeyBytes, "AES"))
+        val dataIv = dataCipher.iv
+        val ct = dataCipher.doFinal(plain)
+
+        // 3) 只把 32 字节数据密钥送进 Keystore 包装——StrongBox 处理这点数据是瞬时的
+        val wrapCipher = Cipher.getInstance(TRANSFORMATION)
+        wrapCipher.init(Cipher.ENCRYPT_MODE, MasterKeyManager.getOrCreateKey())
+        val wrapIv = wrapCipher.iv
+        val wrappedKey = wrapCipher.doFinal(dataKeyBytes)
+        dataKeyBytes.fill(0)
+
+        check(wrapIv.size == IV_SIZE) { "unexpected wrap iv size" }
+        check(dataIv.size == IV_SIZE) { "unexpected data iv size" }
+        check(wrappedKey.size == WRAPPED_KEY_SIZE) { "unexpected wrapped key size" }
+
         dest.parentFile?.mkdirs()
         dest.outputStream().use { out ->
-            out.write(MAGIC)
-            out.write(iv)
+            out.write(MAGIC_V2)
+            out.write(wrapIv)
+            out.write(wrappedKey)
+            out.write(dataIv)
             out.write(ct)
         }
     }
@@ -77,11 +128,52 @@ object MediaCryptor {
     }
 
     fun decryptBytes(src: File): ByteArray {
-        require(isEncryptedFile(src)) { "Not an XNC1 encrypted file: ${src.name}" }
+        val magic = magicOf(src)
+        require(magic != null) { "Not an encrypted file: ${src.name}" }
         val all = src.readBytes()
-        val iv = all.copyOfRange(MAGIC.size, MAGIC.size + IV_SIZE)
-        val ct = all.copyOfRange(MAGIC.size + IV_SIZE, all.size)
-        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        return when {
+            magic.contentEquals(MAGIC_V2) -> decryptV2(all, src)
+            magic.contentEquals(MAGIC_V1) -> decryptV1(all)
+            else -> throw IllegalArgumentException("Unknown container magic: ${src.name}")
+        }
+    }
+
+    /** 信封格式：先用 Keystore 解出 32 字节数据密钥，再用软件密钥解文件本体 */
+    private fun decryptV2(all: ByteArray, src: File): ByteArray {
+        val minSize = MAGIC_SIZE + IV_SIZE + WRAPPED_KEY_SIZE + IV_SIZE
+        require(all.size > minSize) { "Truncated XNC2 file: ${src.name}" }
+
+        var p = MAGIC_SIZE
+        val wrapIv = all.copyOfRange(p, p + IV_SIZE); p += IV_SIZE
+        val wrappedKey = all.copyOfRange(p, p + WRAPPED_KEY_SIZE); p += WRAPPED_KEY_SIZE
+        val dataIv = all.copyOfRange(p, p + IV_SIZE); p += IV_SIZE
+        val ct = all.copyOfRange(p, all.size)
+
+        val wrapCipher = Cipher.getInstance(TRANSFORMATION)
+        wrapCipher.init(
+            Cipher.DECRYPT_MODE,
+            MasterKeyManager.getOrCreateKey(),
+            GCMParameterSpec(GCM_TAG_BITS, wrapIv)
+        )
+        val dataKeyBytes = wrapCipher.doFinal(wrappedKey)
+        try {
+            val dataCipher = Cipher.getInstance(TRANSFORMATION)
+            dataCipher.init(
+                Cipher.DECRYPT_MODE,
+                SecretKeySpec(dataKeyBytes, "AES"),
+                GCMParameterSpec(GCM_TAG_BITS, dataIv)
+            )
+            return dataCipher.doFinal(ct)
+        } finally {
+            dataKeyBytes.fill(0)
+        }
+    }
+
+    /** 旧格式：整个文件直接过 Keystore 主密钥。慢，但既有文件必须仍能读 */
+    private fun decryptV1(all: ByteArray): ByteArray {
+        val iv = all.copyOfRange(MAGIC_SIZE, MAGIC_SIZE + IV_SIZE)
+        val ct = all.copyOfRange(MAGIC_SIZE + IV_SIZE, all.size)
+        val cipher = Cipher.getInstance(TRANSFORMATION)
         cipher.init(
             Cipher.DECRYPT_MODE,
             MasterKeyManager.getOrCreateKey(),
@@ -92,9 +184,36 @@ object MediaCryptor {
 
     /**
      * 通用读：加密文件→解密返回；非加密（迁移过渡态）→直接返回原字节。
+     *
+     * 读到旧格式 XNC1 时顺手改写为 XNC2。XNC1 每次读都要把整个文件过一遍
+     * StrongBox（几十 KB/s），升级一次之后就永久走软件密钥了。
+     * 迁移失败不影响本次读取，下次再试。
      */
-    fun readAll(file: File): ByteArray =
-        if (isEncryptedFile(file)) decryptBytes(file) else file.readBytes()
+    fun readAll(file: File): ByteArray {
+        val magic = magicOf(file) ?: return file.readBytes()
+        val plain = decryptBytes(file)
+        if (magic.contentEquals(MAGIC_V1)) {
+            try {
+                rewriteAsV2(file, plain)
+                SecurityLog.i("MediaCryptor", "Upgraded container XNC1 to XNC2")
+            } catch (t: Throwable) {
+                SecurityLog.w("MediaCryptor", "XNC1 to XNC2 upgrade failed, kept as is")
+            }
+        }
+        return plain
+    }
+
+    /** 原子改写：先写临时文件再 rename，中途失败不会留下半个坏文件 */
+    private fun rewriteAsV2(file: File, plain: ByteArray) {
+        val tmp = File(file.parentFile, file.name + ".v2.tmp")
+        try {
+            encryptBytes(plain, tmp)
+            if (!tmp.renameTo(file)) throw IOException("rename failed: " + file.name)
+        } catch (t: Throwable) {
+            tmp.delete()
+            throw t
+        }
+    }
 
     /**
      * 通用 InputStream，调用方关闭后要确保后续不再持有解密后的字节缓存。
@@ -136,6 +255,43 @@ object MediaCryptor {
     }
 
     /**
+     * 后台一次性把私有目录下的 XNC1 容器升级成 XNC2。
+     *
+     * 光靠 [readAll] 里的懒迁移不够：[com.example.xnote.ui.ImageMediaSpan] 是在主线程
+     * 解密缩略图的，一条纪事里有几张旧图，打开时就会在主线程连续做几次
+     * StrongBox 整文件解密，直接 ANR。所以启动时先在后台把存量升级掉。
+     *
+     * 单个文件失败就跳过，留给懒迁移下次再试；用最低优先级线程，不与启动争资源。
+     */
+    fun upgradeLegacyContainersAsync(context: Context) {
+        val thread = Thread({
+            var upgraded = 0
+            var skipped = 0
+            for (name in arrayOf("images", "audios", "files")) {
+                val files = File(context.filesDir, name).listFiles() ?: continue
+                for (f in files) {
+                    if (!f.isFile) continue
+                    if (magicOf(f)?.contentEquals(MAGIC_V1) != true) continue
+                    try {
+                        rewriteAsV2(f, decryptV1(f.readBytes()))
+                        upgraded++
+                    } catch (t: Throwable) {
+                        skipped++
+                    }
+                }
+            }
+            if (upgraded > 0 || skipped > 0) {
+                SecurityLog.i(
+                    "MediaCryptor",
+                    "Legacy container upgrade done: upgraded=" + upgraded + " skipped=" + skipped
+                )
+            }
+        }, "xnc-upgrade")
+        thread.priority = Thread.MIN_PRIORITY
+        thread.start()
+    }
+
+    /**
      * 启动时清理上次遗留的解密临时文件。
      */
     fun cleanupDecryptedTempDir(context: Context) {
@@ -165,6 +321,10 @@ object MediaCryptor {
         return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts)
     }
 
+    /**
+     * 全尺寸解码。大图会直接吃掉几十 MB 堆并可能抛 OutOfMemoryError，
+     * 只在确知图片很小、且不在主线程时用；显示用途请走 [decodeBitmapSampled]。
+     */
     fun decodeBitmapFull(src: File): Bitmap? {
         val bytes = readAll(src)
         return BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
