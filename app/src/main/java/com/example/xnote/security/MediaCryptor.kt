@@ -57,6 +57,51 @@ object MediaCryptor {
 
     private val secureRandom by lazy { SecureRandom() }
 
+    private const val KEY_CACHE_MAX = 16
+
+    /**
+     * 已解包的数据密钥缓存，key 是该文件头里那段 wrappedKey 的十六进制。
+     *
+     * Keystore（尤其 StrongBox）每次调用都要往安全芯片走一趟，这个固定往返开销
+     * 与数据量无关。而一次「添加图片」会对同一个文件连续解包好几次
+     * （取尺寸、画缩略图、点开大图），每次都白付一趟。用 wrappedKey 当 key 的好处是
+     * 文件内容一变、wrappedKey 必变，缓存自动失效，不需要盯 mtime。
+     *
+     * 代价：最近用过的若干把数据密钥会驻留在堆内存里（16 × 32 字节）。
+     * 主密钥仍然只在 Keystore 内、不可导出；而解密后的图片本体本来也在堆上，
+     * 所以这点暴露面的增加是可接受的。需要时可调 [clearKeyCache] 主动清掉。
+     */
+    private val keyCache = object : LinkedHashMap<String, ByteArray>(KEY_CACHE_MAX, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, ByteArray>): Boolean {
+            if (size > KEY_CACHE_MAX) {
+                eldest.value.fill(0)
+                return true
+            }
+            return false
+        }
+    }
+
+    private fun cacheKeyOf(wrappedKey: ByteArray): String {
+        val sb = StringBuilder(wrappedKey.size * 2)
+        for (b in wrappedKey) sb.append("%02x".format(b))
+        return sb.toString()
+    }
+
+    private fun cachedDataKey(wrappedKey: ByteArray): ByteArray? =
+        synchronized(keyCache) { keyCache[cacheKeyOf(wrappedKey)]?.copyOf() }
+
+    private fun rememberDataKey(wrappedKey: ByteArray, dataKey: ByteArray) {
+        synchronized(keyCache) { keyCache[cacheKeyOf(wrappedKey)] = dataKey.copyOf() }
+    }
+
+    /** 清空数据密钥缓存（例如切到后台、或需要收紧内存暴露面时） */
+    fun clearKeyCache() {
+        synchronized(keyCache) {
+            keyCache.values.forEach { it.fill(0) }
+            keyCache.clear()
+        }
+    }
+
     /** 读文件头 4 字节；不是可识别的容器则返回 null */
     private fun magicOf(file: File): ByteArray? {
         if (!file.exists() || file.length() < (MAGIC_SIZE + IV_SIZE).toLong()) return null
@@ -91,6 +136,8 @@ object MediaCryptor {
         wrapCipher.init(Cipher.ENCRYPT_MODE, MasterKeyManager.getOrCreateKey())
         val wrapIv = wrapCipher.iv
         val wrappedKey = wrapCipher.doFinal(dataKeyBytes)
+        // 先入缓存：刚写完的文件马上就会被读回去画缩略图，省掉那趟 Keystore 往返
+        rememberDataKey(wrappedKey, dataKeyBytes)
         dataKeyBytes.fill(0)
 
         check(wrapIv.size == IV_SIZE) { "unexpected wrap iv size" }
@@ -149,13 +196,15 @@ object MediaCryptor {
         val dataIv = all.copyOfRange(p, p + IV_SIZE); p += IV_SIZE
         val ct = all.copyOfRange(p, all.size)
 
-        val wrapCipher = Cipher.getInstance(TRANSFORMATION)
-        wrapCipher.init(
-            Cipher.DECRYPT_MODE,
-            MasterKeyManager.getOrCreateKey(),
-            GCMParameterSpec(GCM_TAG_BITS, wrapIv)
-        )
-        val dataKeyBytes = wrapCipher.doFinal(wrappedKey)
+        val dataKeyBytes = cachedDataKey(wrappedKey) ?: run {
+            val wrapCipher = Cipher.getInstance(TRANSFORMATION)
+            wrapCipher.init(
+                Cipher.DECRYPT_MODE,
+                MasterKeyManager.getOrCreateKey(),
+                GCMParameterSpec(GCM_TAG_BITS, wrapIv)
+            )
+            wrapCipher.doFinal(wrappedKey).also { rememberDataKey(wrappedKey, it) }
+        }
         try {
             val dataCipher = Cipher.getInstance(TRANSFORMATION)
             dataCipher.init(
@@ -308,7 +357,9 @@ object MediaCryptor {
     }
 
     fun decodeBitmapSampled(src: File, maxWidth: Int, maxHeight: Int): Bitmap? {
+        val t0 = System.currentTimeMillis()
         val bytes = readAll(src)
+        val t1 = System.currentTimeMillis()
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
         var sample = 1
@@ -318,7 +369,15 @@ object MediaCryptor {
             while (halfW / sample >= maxWidth && halfH / sample >= maxHeight) sample *= 2
         }
         val opts = BitmapFactory.Options().apply { inSampleSize = sample }
-        return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts)
+        val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts)
+        val t2 = System.currentTimeMillis()
+        SecurityLog.i(
+            "Perf",
+            "decodeSampled 解密=" + (t1 - t0) + "ms 解码=" + (t2 - t1) +
+                "ms 上限=" + maxWidth + "x" + maxHeight + " sample=" + sample +
+                " 源=" + bounds.outWidth + "x" + bounds.outHeight
+        )
+        return bmp
     }
 
     /**

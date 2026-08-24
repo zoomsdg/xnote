@@ -25,6 +25,9 @@ object FileUtils {
     /** 落盘图片的长边上限。现在手机随手一张就是四五千万像素，全尺寸解码必然爆内存 */
     private const val MAX_IMAGE_DIMENSION = 2048
 
+    /** JPEG 重编码质量。90 以上收益很小、体积明显变大，而体积直接决定后续每次解码的耗时 */
+    private const val JPEG_QUALITY = 85
+
     /**
      * 保存图片到应用私有目录（加密）。
      *
@@ -35,20 +38,38 @@ object FileUtils {
      * 改为：先读 header 算采样率再降采样解码，API 28+ 优先用 ImageDecoder（原生支持 HEIF/AVIF
      * 且自动应用 EXIF 方向），失败再退回 BitmapFactory 并手动纠正方向。
      */
-    fun saveImageToPrivateStorage(context: Context, uri: Uri): String? {
+    /** 落盘结果：加密后的路径，以及尺寸（直接取自内存里那张 bitmap，不必回读文件） */
+    data class SavedImage(val path: String, val width: Int, val height: Int)
+
+    fun saveImageToPrivateStorage(context: Context, uri: Uri): SavedImage? {
         return try {
+            val t0 = System.currentTimeMillis()
             val bitmap = decodeScaledBitmap(context, uri) ?: run {
                 SecurityLog.e("FileUtils", "图片解码失败(返回 null): $uri")
                 return null
             }
+            val width = bitmap.width
+            val height = bitmap.height
+            val t1 = System.currentTimeMillis()
+
             val baos = ByteArrayOutputStream()
-            bitmap.compress(Bitmap.CompressFormat.JPEG, 90, baos)
+            bitmap.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, baos)
             bitmap.recycle()
+            val jpeg = baos.toByteArray()
+            val t2 = System.currentTimeMillis()
 
             val dir = File(context.filesDir, "images").apply { mkdirs() }
             val target = File(dir, "img_${UUID.randomUUID()}.jpg")
-            MediaCryptor.encryptBytes(baos.toByteArray(), target)
-            target.absolutePath
+            MediaCryptor.encryptBytes(jpeg, target)
+            val t3 = System.currentTimeMillis()
+
+            SecurityLog.i(
+                "Perf",
+                "saveImage 解码=" + (t1 - t0) + "ms 编码=" + (t2 - t1) +
+                    "ms 加密=" + (t3 - t2) + "ms 尺寸=" + width + "x" + height +
+                    " 字节=" + jpeg.size
+            )
+            SavedImage(target.absolutePath, width, height)
         } catch (t: Throwable) {
             // 包含 OutOfMemoryError 与部分 ROM 在读 content:// 时抛的 SecurityException
             SecurityLog.e("FileUtils", "saveImageToPrivateStorage failed", t)
@@ -197,7 +218,10 @@ object FileUtils {
     }
 
     /**
-     * 获取图片尺寸（不解码全图，只读 header）
+     * 获取图片尺寸（不解码全图，只读 header）。
+     *
+     * 注意：这会把整个文件解密一遍。新增图片时不要用它——
+     * [saveImageToPrivateStorage] 已经在 [SavedImage] 里带回了尺寸。
      */
     fun getImageSize(filePath: String): Pair<Int, Int> {
         return try {
