@@ -4,6 +4,7 @@ import android.app.Application
 import com.example.xnote.config.AppSecurityConfig
 import com.example.xnote.security.LegacyDataMigrator
 import com.example.xnote.security.MasterKeyManager
+import com.example.xnote.security.MediaRootKeyProvider
 import com.example.xnote.security.MediaCryptor
 import com.example.xnote.utils.AttachmentUtils
 import com.example.xnote.utils.SecurityLog
@@ -14,6 +15,9 @@ class XNoteApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         val t0 = System.currentTimeMillis()
+
+        // 只记 Context，不做加解密；必须在任何 MediaCryptor 调用之前
+        MediaRootKeyProvider.install(this)
 
         // SQLCipher native 库必须在任何 DB 操作之前加载，只能同步做
         SQLiteDatabase.loadLibs(this)
@@ -38,6 +42,9 @@ class XNoteApplication : Application() {
         // 没有任何东西同步依赖它们完成，但都要遍历/删除目录甚至做加解密，
         // 放主线程纯粹白占启动时间。统一挪到一条低优先级后台线程上。
         val thread = Thread({
+            // 提前把媒体根密钥解封好（唯一一趟 Keystore），
+            // 这样用户打开第一条带图纪事时不必现场等它
+            MediaRootKeyProvider.warmUp()
             // 上次进程遗留的解密临时文件（崩溃/被杀时可能残留）
             runCatching { MediaCryptor.cleanupDecryptedTempDir(this) }
             // 上次"打开附件"时解密到 cache 的明文附件
