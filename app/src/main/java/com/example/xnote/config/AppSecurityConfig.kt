@@ -15,14 +15,30 @@ object AppSecurityConfig {
     private const val KEY_BIOMETRIC_AUTH_ENABLED = "biometric_auth_enabled"
     private const val KEY_SESSION_TIMEOUT = "session_timeout_minutes"
     
-    private lateinit var secureStorage: SecureConfigStorage
+    @Volatile
+    private var appContext: Context? = null
+
+    /**
+     * 首次使用时才真正建加密存储。
+     *
+     * [SecureConfigStorage] 的构造里会 EncryptedSharedPreferences.create——
+     * 创建/读取 StrongBox 主密钥再初始化 Tink 密钥集，在带 StrongBox 的机器上
+     * 要几百毫秒到一秒多。而这里存的只是导出密码哈希和几个开关，
+     * 用户不打开导出/设置根本用不到，没必要卡在启动路径上。
+     * [SecureConfigStorage.getInstance] 自带单例缓存，之后取用是廉价的。
+     */
+    private val secureStorage: SecureConfigStorage
+        get() = SecureConfigStorage.getInstance(
+            requireNotNull(appContext) { "AppSecurityConfig.initialize() 尚未调用" }
+        )
     
     /**
      * 初始化安全配置
      */
     fun initialize(context: Context) {
-        secureStorage = SecureConfigStorage.getInstance(context)
-        SecurityLog.d("AppSecurityConfig", "Security configuration initialized")
+        // 只记住 Context，真正的加密存储延后到首次使用
+        appContext = context.applicationContext
+        SecurityLog.d("AppSecurityConfig", "Security configuration initialized (lazy)")
     }
     
     /**
