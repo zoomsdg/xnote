@@ -22,10 +22,22 @@ object MasterKeyManager {
         KeyStore.getInstance(KEYSTORE_PROVIDER).apply { load(null) }
     }
 
+    /**
+     * 已取到的密钥句柄。缓存的只是一个句柄，真正的密钥材料始终留在
+     * TEE/StrongBox 里、不可导出，所以缓存它不改变安全性。
+     *
+     * 不缓存的话每次调用都要走一趟 keyStore.getKey()，而这个方法会被
+     * DB 密钥解封、以及每一次媒体加解密反复调用——启动和加图都在白付往返开销。
+     */
+    @Volatile
+    private var cachedKey: SecretKey? = null
+
     @Synchronized
     fun getOrCreateKey(): SecretKey {
-        keyStore.getKey(KEY_ALIAS, null)?.let { return it as SecretKey }
-        return createKey()
+        cachedKey?.let { return it }
+        val key = (keyStore.getKey(KEY_ALIAS, null) as? SecretKey) ?: createKey()
+        cachedKey = key
+        return key
     }
 
     private fun createKey(): SecretKey {

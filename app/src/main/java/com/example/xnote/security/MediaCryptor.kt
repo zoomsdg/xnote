@@ -304,7 +304,7 @@ object MediaCryptor {
     }
 
     /**
-     * 后台一次性把私有目录下的 XNC1 容器升级成 XNC2。
+     * 一次性把私有目录下的 XNC1 容器升级成 XNC2。调用方负责放后台线程。
      *
      * 光靠 [readAll] 里的懒迁移不够：[com.example.xnote.ui.ImageMediaSpan] 是在主线程
      * 解密缩略图的，一条纪事里有几张旧图，打开时就会在主线程连续做几次
@@ -312,32 +312,28 @@ object MediaCryptor {
      *
      * 单个文件失败就跳过，留给懒迁移下次再试；用最低优先级线程，不与启动争资源。
      */
-    fun upgradeLegacyContainersAsync(context: Context) {
-        val thread = Thread({
-            var upgraded = 0
-            var skipped = 0
-            for (name in arrayOf("images", "audios", "files")) {
-                val files = File(context.filesDir, name).listFiles() ?: continue
-                for (f in files) {
-                    if (!f.isFile) continue
-                    if (magicOf(f)?.contentEquals(MAGIC_V1) != true) continue
-                    try {
-                        rewriteAsV2(f, decryptV1(f.readBytes()))
-                        upgraded++
-                    } catch (t: Throwable) {
-                        skipped++
-                    }
+    fun upgradeLegacyContainers(context: Context) {
+        var upgraded = 0
+        var skipped = 0
+        for (name in arrayOf("images", "audios", "files")) {
+            val files = File(context.filesDir, name).listFiles() ?: continue
+            for (f in files) {
+                if (!f.isFile) continue
+                if (magicOf(f)?.contentEquals(MAGIC_V1) != true) continue
+                try {
+                    rewriteAsV2(f, decryptV1(f.readBytes()))
+                    upgraded++
+                } catch (t: Throwable) {
+                    skipped++
                 }
             }
-            if (upgraded > 0 || skipped > 0) {
-                SecurityLog.i(
-                    "MediaCryptor",
-                    "Legacy container upgrade done: upgraded=" + upgraded + " skipped=" + skipped
-                )
-            }
-        }, "xnc-upgrade")
-        thread.priority = Thread.MIN_PRIORITY
-        thread.start()
+        }
+        if (upgraded > 0 || skipped > 0) {
+            SecurityLog.i(
+                "MediaCryptor",
+                "Legacy container upgrade done: upgraded=" + upgraded + " skipped=" + skipped
+            )
+        }
     }
 
     /**
