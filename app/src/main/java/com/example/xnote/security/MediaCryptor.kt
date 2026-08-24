@@ -18,11 +18,15 @@ import javax.crypto.spec.SecretKeySpec
 /**
  * 媒体文件加解密。采用信封加密（envelope encryption）。
  *
- * 落盘格式（当前写入 XNC2）：
- *   [magic 4B "XNC2"][wrapIv 12B][wrappedKey 48B][dataIv 12B][ciphertext + GCM tag]
+ * 落盘格式（当前写入 XNC3）：
+ *   [magic 4B "XNC3"][wrapIv 12B][wrappedKey 48B][dataIv 12B][ciphertext + GCM tag]
+ *   数据密钥由 [MediaRootKeyProvider] 的根密钥在软件里包封；根密钥本身被
+ *   Keystore 保护，整个进程只解封一次。
  *
- * 仍兼容读取旧格式 XNC1：
+ * 兼容读取 XNC2（结构相同，但数据密钥由 Keystore 主密钥直接包封，
+ * 因而每个文件都要一趟 Keystore 往返）与 XNC1：
  *   [magic 4B "XNC1"][iv 12B][ciphertext + GCM tag]
+ * 两者读到时都会就地升级为 XNC3。
  *
  * 为什么要分两层：
  * XNC1 把整个文件直接喂给 [MasterKeyManager] 的 Keystore 主密钥，而该密钥优先建在
@@ -44,6 +48,7 @@ object MediaCryptor {
 
     private val MAGIC_V1 = byteArrayOf(0x58, 0x4E, 0x43, 0x31) // "XNC1"
     private val MAGIC_V2 = byteArrayOf(0x58, 0x4E, 0x43, 0x32) // "XNC2"
+    private val MAGIC_V3 = byteArrayOf(0x58, 0x4E, 0x43, 0x33) // "XNC3"
     private const val MAGIC_SIZE = 4
     private const val IV_SIZE = 12
     private const val GCM_TAG_BITS = 128
@@ -116,7 +121,7 @@ object MediaCryptor {
 
     fun isEncryptedFile(file: File): Boolean {
         val m = magicOf(file) ?: return false
-        return m.contentEquals(MAGIC_V2) || m.contentEquals(MAGIC_V1)
+        return m.contentEquals(MAGIC_V3) || m.contentEquals(MAGIC_V2) || m.contentEquals(MAGIC_V1)
     }
 
     fun encryptBytes(plain: ByteArray, dest: File) {
@@ -131,9 +136,12 @@ object MediaCryptor {
         val dataIv = dataCipher.iv
         val ct = dataCipher.doFinal(plain)
 
-        // 3) 只把 32 字节数据密钥送进 Keystore 包装——StrongBox 处理这点数据是瞬时的
+        // 3) 用根密钥（软件）包封这 32 字节数据密钥。
+        //    根密钥自己才是被 Keystore 保护的那一把，且整个进程只解封一次——
+        //    否则每写/读一个文件都要走一趟 Keystore，带 StrongBox 的机器上
+        //    那是约半秒的固定开销，打开一条多图纪事就会一张一张往外蹦。
         val wrapCipher = Cipher.getInstance(TRANSFORMATION)
-        wrapCipher.init(Cipher.ENCRYPT_MODE, MasterKeyManager.getOrCreateKey())
+        wrapCipher.init(Cipher.ENCRYPT_MODE, MediaRootKeyProvider.getOrCreate())
         val wrapIv = wrapCipher.iv
         val wrappedKey = wrapCipher.doFinal(dataKeyBytes)
         // 先入缓存：刚写完的文件马上就会被读回去画缩略图，省掉那趟 Keystore 往返
@@ -146,7 +154,7 @@ object MediaCryptor {
 
         dest.parentFile?.mkdirs()
         dest.outputStream().use { out ->
-            out.write(MAGIC_V2)
+            out.write(MAGIC_V3)
             out.write(wrapIv)
             out.write(wrappedKey)
             out.write(dataIv)
@@ -179,16 +187,23 @@ object MediaCryptor {
         require(magic != null) { "Not an encrypted file: ${src.name}" }
         val all = src.readBytes()
         return when {
-            magic.contentEquals(MAGIC_V2) -> decryptV2(all, src)
+            magic.contentEquals(MAGIC_V3) -> decryptEnvelope(all, src, useRootKey = true)
+            magic.contentEquals(MAGIC_V2) -> decryptEnvelope(all, src, useRootKey = false)
             magic.contentEquals(MAGIC_V1) -> decryptV1(all)
             else -> throw IllegalArgumentException("Unknown container magic: ${src.name}")
         }
     }
 
-    /** 信封格式：先用 Keystore 解出 32 字节数据密钥，再用软件密钥解文件本体 */
-    private fun decryptV2(all: ByteArray, src: File): ByteArray {
+    /**
+     * 信封格式：先解出 32 字节数据密钥，再用它解文件本体。
+     *
+     * @param useRootKey true 走 XNC3：数据密钥由内存里的根密钥包封，纯软件、微秒级；
+     *                   false 走 XNC2：数据密钥由 Keystore 主密钥直接包封，
+     *                   每个文件都要一趟 Keystore 往返（慢），仅为兼容既有文件保留。
+     */
+    private fun decryptEnvelope(all: ByteArray, src: File, useRootKey: Boolean): ByteArray {
         val minSize = MAGIC_SIZE + IV_SIZE + WRAPPED_KEY_SIZE + IV_SIZE
-        require(all.size > minSize) { "Truncated XNC2 file: ${src.name}" }
+        require(all.size > minSize) { "Truncated envelope file: ${src.name}" }
 
         var p = MAGIC_SIZE
         val wrapIv = all.copyOfRange(p, p + IV_SIZE); p += IV_SIZE
@@ -197,10 +212,12 @@ object MediaCryptor {
         val ct = all.copyOfRange(p, all.size)
 
         val dataKeyBytes = cachedDataKey(wrappedKey) ?: run {
+            val wrappingKey =
+                if (useRootKey) MediaRootKeyProvider.getOrCreate() else MasterKeyManager.getOrCreateKey()
             val wrapCipher = Cipher.getInstance(TRANSFORMATION)
             wrapCipher.init(
                 Cipher.DECRYPT_MODE,
-                MasterKeyManager.getOrCreateKey(),
+                wrappingKey,
                 GCMParameterSpec(GCM_TAG_BITS, wrapIv)
             )
             wrapCipher.doFinal(wrappedKey).also { rememberDataKey(wrappedKey, it) }
@@ -241,20 +258,26 @@ object MediaCryptor {
     fun readAll(file: File): ByteArray {
         val magic = magicOf(file) ?: return file.readBytes()
         val plain = decryptBytes(file)
-        if (magic.contentEquals(MAGIC_V1)) {
+        if (!magic.contentEquals(MAGIC_V3)) {
             try {
-                rewriteAsV2(file, plain)
-                SecurityLog.i("MediaCryptor", "Upgraded container XNC1 to XNC2")
+                rewriteAsLatest(file, plain)
+                SecurityLog.i("MediaCryptor", "Upgraded container to XNC3")
             } catch (t: Throwable) {
-                SecurityLog.w("MediaCryptor", "XNC1 to XNC2 upgrade failed, kept as is")
+                SecurityLog.w("MediaCryptor", "Container upgrade failed, kept as is")
             }
         }
         return plain
     }
 
-    /** 原子改写：先写临时文件再 rename，中途失败不会留下半个坏文件 */
-    private fun rewriteAsV2(file: File, plain: ByteArray) {
-        val tmp = File(file.parentFile, file.name + ".v2.tmp")
+    /**
+     * 原子改写为当前格式：先写临时文件再 rename，中途失败不会留下半个坏文件。
+     *
+     * 临时名带 UUID：后台批量升级线程与 UI 线程的惰性升级可能同时盯上同一个文件，
+     * 用固定临时名会让两边写进同一个中间文件、互相踩踏。各写各的再 rename，
+     * 谁后到谁生效——两份都是同一段明文的合法密文，覆盖谁都无所谓。
+     */
+    private fun rewriteAsLatest(file: File, plain: ByteArray) {
+        val tmp = File(file.parentFile, file.name + "." + UUID.randomUUID() + ".tmp")
         try {
             encryptBytes(plain, tmp)
             if (!tmp.renameTo(file)) throw IOException("rename failed: " + file.name)
@@ -317,11 +340,17 @@ object MediaCryptor {
         var skipped = 0
         for (name in arrayOf("images", "audios", "files")) {
             val files = File(context.filesDir, name).listFiles() ?: continue
+            // 先清掉上次进程被杀时留下的改写中间文件。此刻本轮升级还没开始写，
+            // 不会误删正在使用的临时文件。
             for (f in files) {
-                if (!f.isFile) continue
-                if (magicOf(f)?.contentEquals(MAGIC_V1) != true) continue
+                if (f.isFile && f.name.endsWith(".tmp")) f.delete()
+            }
+            for (f in files) {
+                if (!f.isFile || !f.exists()) continue
+                val magic = magicOf(f) ?: continue
+                if (magic.contentEquals(MAGIC_V3)) continue
                 try {
-                    rewriteAsV2(f, decryptV1(f.readBytes()))
+                    rewriteAsLatest(f, decryptBytes(f))
                     upgraded++
                 } catch (t: Throwable) {
                     skipped++
