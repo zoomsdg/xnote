@@ -9,7 +9,9 @@ import androidx.core.content.FileProvider
 import androidx.documentfile.provider.DocumentFile
 import com.example.xnote.data.NoteBlock
 import com.example.xnote.security.MediaCryptor
+import java.io.ByteArrayOutputStream
 import java.io.File
+import java.io.InputStream
 import java.util.UUID
 
 /**
@@ -53,13 +55,16 @@ object AttachmentUtils {
                 return PickResult.TooLarge(declaredSize)
             }
 
-            val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+            // 不能直接 readBytes()：不少 provider（尤其云盘类 DocumentsProvider）
+            // 压根不报 SIZE，declaredSize 为 null 时就变成无上限读入内存，
+            // 一个几百 MB 的文件会直接 OutOfMemoryError——而 OOM 是 Error 不是 Exception，
+            // 下面的 catch 接不住，表现就是选个大文件直接闪退。
+            // 两个 null 含义不同，必须拆开判：打不开流 vs 读超上限
+            val input = context.contentResolver.openInputStream(uri)
                 ?: return PickResult.Failed("无法读取所选文件")
-
-            // 有些 provider 不申报大小，读完再兜底校验一次
-            if (bytes.size.toLong() > MAX_ATTACHMENT_SIZE) {
-                return PickResult.TooLarge(bytes.size.toLong())
-            }
+            // readAtMost 返回 null 表示超了上限，此时并没把全文读进来，也拿不到真实大小
+            val bytes = input.use { readAtMost(it, MAX_ATTACHMENT_SIZE) }
+                ?: return PickResult.Failed("附件超过 ${formatSize(MAX_ATTACHMENT_SIZE)} 上限")
 
             val dir = File(context.filesDir, ATTACH_DIR).apply { mkdirs() }
             // 落盘名不含原始文件名（原名只存库里的 alt），避免奇怪字符污染文件系统
@@ -67,8 +72,10 @@ object AttachmentUtils {
             MediaCryptor.encryptBytes(bytes, target)
 
             PickResult.Ok(Attachment(target.absolutePath, name, bytes.size.toLong()))
-        } catch (e: Exception) {
-            SecurityLog.e("AttachmentUtils", "saveAttachmentToPrivateStorage failed", e)
+        } catch (t: Throwable) {
+            // 一律按 Throwable 兜：OutOfMemoryError 与部分 ROM 读 content:// 时抛的
+            // SecurityException 都应该降级为一条提示，而不是崩掉整个编辑页
+            SecurityLog.e("AttachmentUtils", "saveAttachmentToPrivateStorage failed", t)
             PickResult.Failed("附件保存失败")
         }
     }
@@ -138,8 +145,9 @@ object AttachmentUtils {
                 out.write(MediaCryptor.readAll(src))
                 true
             } ?: false
-        } catch (e: Exception) {
-            SecurityLog.e("AttachmentUtils", "exportAttachmentTo failed", e)
+        } catch (t: Throwable) {
+            // 解密是整文件进内存，大附件可能 OOM，同样要兜住 Error
+            SecurityLog.e("AttachmentUtils", "exportAttachmentTo failed", t)
             false
         }
     }
@@ -199,6 +207,24 @@ object AttachmentUtils {
             ?.use { cursor ->
                 if (cursor.moveToFirst()) cursor.getString(0)?.takeIf { it.isNotBlank() } else null
             }
+    }
+
+    /**
+     * 最多读 [limit] 字节；超过就放弃并返回 null。
+     * 这样 provider 不报大小时，也不会把超大文件整个堆进内存。
+     */
+    private fun readAtMost(input: InputStream, limit: Long): ByteArray? {
+        val buffer = ByteArrayOutputStream()
+        val chunk = ByteArray(64 * 1024)
+        var total = 0L
+        while (true) {
+            val n = input.read(chunk)
+            if (n < 0) break
+            total += n
+            if (total > limit) return null
+            buffer.write(chunk, 0, n)
+        }
+        return buffer.toByteArray()
     }
 
     private fun queryFileSize(context: Context, uri: Uri): Long? {

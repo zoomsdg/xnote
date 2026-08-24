@@ -3,8 +3,25 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
-    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
-    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
+
+    <!--
+      存储权限按版本分段声明：
+      - Android 9(28) 及以下才需要 WRITE_EXTERNAL_STORAGE，之后分区存储已接管；
+      - Android 12(32) 及以下用 READ_EXTERNAL_STORAGE；
+      - Android 13(33) 起该权限被系统直接忽略（既不弹窗也不出现在权限列表里），
+        必须改用下面按媒体类型细分的 READ_MEDIA_* 权限，否则「读取图库」根本不会出现。
+    -->
+    <uses-permission
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="28" />
+    <uses-permission
+        android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32" />
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
+    <!-- Android 14(34) 起用户可只授权「选中的照片」，缺这条会被判定为完全无权访问 -->
+    <uses-permission android:name="android.permission.READ_MEDIA_VISUAL_USER_SELECTED" />
+
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 

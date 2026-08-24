@@ -11,7 +11,9 @@ import com.example.xnote.utils.ExportImportUtils
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Job
 import java.io.File
 
@@ -207,7 +209,12 @@ class MainViewModel(
         val fullNotes = noteIds.mapNotNull { repository.getFullNote(it) }
         val categoryNameById = repository.getAllCategoriesOnce().associate { it.id to it.name }
         val exportUtils = ExportImportUtils(repository.context)
-        exportUtils.exportNotes(fullNotes, categoryNameById, password, onProgress, onSuccess, onError)
+        // exportNotes 是普通函数：解密全部媒体 + AES-256 压缩整个 ZIP 都在调用线程上跑。
+        // 调用方是 lifecycleScope.launch（Dispatchers.Main），笔记一多必 ANR。
+        // 三个回调在 MainActivity 里都套了 runOnUiThread，切到 IO 后语义反而正确。
+        withContext(Dispatchers.IO) {
+            exportUtils.exportNotes(fullNotes, categoryNameById, password, onProgress, onSuccess, onError)
+        }
     }
     
     /**
@@ -227,37 +234,41 @@ class MainViewModel(
         onError: (String) -> Unit
     ) {
         val exportUtils = ExportImportUtils(repository.context)
-        // 解析（含密码校验）成功后才进入导入与去重；密码错误走 onError，不会创建新标签页。
-        exportUtils.importNotes(zipFile, password, onProgress,
-            onSuccess = { importNotes ->
-                viewModelScope.launch {
-                    try {
-                        // 密码已校验通过：此时才创建新标签页
-                        val targetNotebookId = when {
-                            !newNotebookName.isNullOrBlank() ->
-                                repository.createNotebook(newNotebookName).id
-                            !existingNotebookId.isNullOrBlank() -> existingNotebookId
-                            else -> NoteRepository.DEFAULT_NOTEBOOK_ID
+        // 同 exportNotes：解压 + 校验 + 解密同样是重活，必须离开主线程。
+        // 内层的 viewModelScope.launch 仍会把入库那段调度回主线程，语义不变。
+        withContext(Dispatchers.IO) {
+            // 解析（含密码校验）成功后才进入导入与去重；密码错误走 onError，不会创建新标签页。
+            exportUtils.importNotes(zipFile, password, onProgress,
+                onSuccess = { importNotes ->
+                    viewModelScope.launch {
+                        try {
+                            // 密码已校验通过：此时才创建新标签页
+                            val targetNotebookId = when {
+                                !newNotebookName.isNullOrBlank() ->
+                                    repository.createNotebook(newNotebookName).id
+                                !existingNotebookId.isNullOrBlank() -> existingNotebookId
+                                else -> NoteRepository.DEFAULT_NOTEBOOK_ID
+                            }
+
+                            val summary = repository.importNotesIntoNotebook(importNotes, targetNotebookId)
+
+                            // 清理临时文件
+                            importNotes.firstOrNull()?.tempDir?.deleteRecursively()
+
+                            // 刷新标签页清单，并切换到导入目标标签页
+                            loadNotebooks()
+                            _selectedNotebookId.value = targetNotebookId
+                            loadNotes()
+
+                            onSuccess(summary, targetNotebookId)
+                        } catch (e: Exception) {
+                            onError("导入失败：${e.message}")
                         }
-
-                        val summary = repository.importNotesIntoNotebook(importNotes, targetNotebookId)
-
-                        // 清理临时文件
-                        importNotes.firstOrNull()?.tempDir?.deleteRecursively()
-
-                        // 刷新标签页清单，并切换到导入目标标签页
-                        loadNotebooks()
-                        _selectedNotebookId.value = targetNotebookId
-                        loadNotes()
-
-                        onSuccess(summary, targetNotebookId)
-                    } catch (e: Exception) {
-                        onError("导入失败：${e.message}")
                     }
-                }
-            },
-            onError = onError
-        )
+                },
+                onError = onError
+            )
+        }
     }
 }
 
