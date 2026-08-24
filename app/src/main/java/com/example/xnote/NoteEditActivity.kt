@@ -90,9 +90,18 @@ class NoteEditActivity : AppCompatActivity() {
         }
     }
 
+    /**
+     * 选本地音频：同样走 SAF，不需要任何存储/媒体权限。
+     * 这里必须用 StartActivityForResult 而不是 GetContent 契约，
+     * 才能在设备没有 ACTION_OPEN_DOCUMENT 处理者时回退到 ACTION_GET_CONTENT。
+     */
     private val pickAudioLauncher = registerForActivityResult(
-        ActivityResultContracts.GetContent()
-    ) { uri -> uri?.let { handleAudioSelected(it) } }
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            extractPickedUris(result.data).firstOrNull()?.let { handleAudioSelected(it) }
+        }
+    }
 
     /** 挂附件：任意格式，交给 SAF 选文件 */
     private val pickFileLauncher = registerForActivityResult(
@@ -180,8 +189,15 @@ class NoteEditActivity : AppCompatActivity() {
         }
         
         binding.btnAddFile.setOnClickListener {
-            // 任意格式：不限定 MIME，让用户自己挑
-            pickFileLauncher.launch(arrayOf("*/*"))
+            // 任意格式：不限定 MIME，让用户自己挑。
+            // 和图片/音频一样加一层保护：个别 ROM 阉掉了 DocumentsUI，
+            // 裸调用会直接抛 ActivityNotFoundException 崩掉编辑页。
+            try {
+                pickFileLauncher.launch(arrayOf("*/*"))
+            } catch (e: ActivityNotFoundException) {
+                SecurityLog.e("NoteEditActivity", "文件选择器不可用", e)
+                Toast.makeText(this, "系统没有可用的文件选择器", Toast.LENGTH_SHORT).show()
+            }
         }
 
         binding.btnStopRecording.setOnClickListener {
@@ -435,20 +451,46 @@ class NoteEditActivity : AppCompatActivity() {
      * 不需要存储权限。
      */
     private fun selectImageFromGallery() {
-        val intent = Intent(Intent.ACTION_GET_CONTENT).apply {
+        val get = Intent(Intent.ACTION_GET_CONTENT).apply {
             addCategory(Intent.CATEGORY_OPENABLE)
             type = "image/*"
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 lastImageLocation()?.let { putExtra(DocumentsContract.EXTRA_INITIAL_URI, it) }
             }
         }
-        try {
-            pickImageLauncher.launch(intent)
-        } catch (e: ActivityNotFoundException) {
+        // Android 13 起 ACTION_GET_CONTENT(image/*) 可能被系统照片选择器接管，
+        // 个别设备上没有对应处理者，这时退回文档选择器，保证按钮不会点了没反应。
+        val fallback = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "image/*"
+            putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
+        }
+        if (!launchPicker(pickImageLauncher, get, fallback)) {
             Toast.makeText(this, "未找到可用的图片选择器", Toast.LENGTH_SHORT).show()
         }
+    }
+
+    /**
+     * 依次尝试几个选择器 Intent，第一个能拉起来的为准。
+     * 除了 ActivityNotFoundException，某些 ROM 在 Intent 带了它不认的 extra 时
+     * 会抛别的异常，所以这里按 Exception 兜底。
+     */
+    private fun launchPicker(
+        launcher: androidx.activity.result.ActivityResultLauncher<Intent>,
+        vararg intents: Intent
+    ): Boolean {
+        for (intent in intents) {
+            try {
+                launcher.launch(intent)
+                return true
+            } catch (e: ActivityNotFoundException) {
+                SecurityLog.e("NoteEditActivity", "选择器不可用: ${intent.action}", e)
+            } catch (e: Exception) {
+                SecurityLog.e("NoteEditActivity", "拉起选择器失败: ${intent.action}", e)
+            }
+        }
+        return false
     }
 
     /** 多选时结果在 clipData 里，单选时还是 data。按选择顺序返回 */
@@ -479,20 +521,43 @@ class NoteEditActivity : AppCompatActivity() {
             .apply()
     }
 
+    /**
+     * 打开本地音频选择器。
+     *
+     * 原先这里先查 READ_EXTERNAL_STORAGE 再决定开不开选择器，
+     * 而 Android 13(API 33) 起该权限对本应用恒为 DENIED 且系统不弹窗，
+     * 于是分支永远走"去申请权限"，选择器一次都打不开。
+     * SAF 选择器本身由系统代选、结果附带临时读授权，压根不需要存储权限，
+     * 这道门直接去掉。
+     */
     private fun selectAudioFromFiles() {
-        if (PermissionUtils.hasStoragePermission(this)) {
-            pickAudioLauncher.launch("audio/*")
-        } else {
-            PermissionUtils.requestStoragePermission(this)
+        val mimeTypes = arrayOf("audio/*", "application/ogg", "application/x-ogg")
+        val open = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "audio/*"
+            putExtra(Intent.EXTRA_MIME_TYPES, mimeTypes)
+        }
+        val fallback = Intent(Intent.ACTION_GET_CONTENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "audio/*"
+            putExtra(Intent.EXTRA_MIME_TYPES, mimeTypes)
+        }
+        if (!launchPicker(pickAudioLauncher, open, fallback)) {
+            Toast.makeText(this, "未找到可用的音频选择器", Toast.LENGTH_SHORT).show()
         }
     }
     
     private fun handleAudioSelected(uri: Uri) {
         lifecycleScope.launch {
             try {
-                val filePath = FileUtils.saveAudioToPrivateStorage(this@NoteEditActivity, uri)
+                // 整段音频读进内存再加密，必须离开主线程，否则大文件会 ANR
+                val filePath = withContext(Dispatchers.IO) {
+                    FileUtils.saveAudioToPrivateStorage(this@NoteEditActivity, uri)
+                }
                 if (filePath != null) {
-                    val duration = FileUtils.getAudioDuration(this@NoteEditActivity, filePath)
+                    val duration = withContext(Dispatchers.IO) {
+                        FileUtils.getAudioDuration(this@NoteEditActivity, filePath)
+                    }
                     val block = NoteBlock(
                         id = UUID.randomUUID().toString(),
                         noteId = noteId,
@@ -538,8 +603,9 @@ class NoteEditActivity : AppCompatActivity() {
                             width = width,
                             height = height
                         )
-                    } catch (e: Exception) {
-                        SecurityLog.e("NoteEditActivity", "保存图片失败", e)
+                    } catch (t: Throwable) {
+                        // 大图解码可能抛 OutOfMemoryError（Error 不是 Exception），必须一起兜住
+                        SecurityLog.e("NoteEditActivity", "保存图片失败", t)
                         null
                     }
                 }
@@ -863,14 +929,8 @@ class NoteEditActivity : AppCompatActivity() {
                     Toast.makeText(this, getString(R.string.audio_permission_required), Toast.LENGTH_SHORT).show()
                 }
             }
-            // 图片走 SAF 不再需要存储权限，这里只剩本地音频
-            PermissionUtils.REQUEST_STORAGE_PERMISSION -> {
-                if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                    selectAudioFromFiles()
-                } else {
-                    Toast.makeText(this, getString(R.string.storage_permission_required), Toast.LENGTH_SHORT).show()
-                }
-            }
+            // 图片和本地音频都走 SAF，由系统代选并附带临时读授权，
+            // 不再申请任何存储/媒体权限，因此这里不再有存储权限的回调分支。
         }
     }
     
